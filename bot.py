@@ -79,7 +79,7 @@ def create_tables():
             )
         """)
         
-        # Таблица транзакций (для истории)
+        # Таблица транзакций
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id SERIAL PRIMARY KEY,
@@ -183,12 +183,16 @@ def update_balance(user_id, amount, transaction_type, description, admin_id=None
         conn = get_db()
         cursor = conn.cursor()
         
+        # Проверяем текущий баланс
+        cursor.execute("SELECT balance FROM users WHERE id = %s", (user_id,))
+        current_balance = cursor.fetchone()[0]
+        
         # Обновляем баланс
+        new_balance = current_balance + amount
         cursor.execute(
-            "UPDATE users SET balance = balance + %s WHERE id = %s RETURNING balance",
-            (amount, user_id)
+            "UPDATE users SET balance = %s WHERE id = %s",
+            (new_balance, user_id)
         )
-        new_balance = cursor.fetchone()[0]
         
         # Записываем транзакцию
         cursor.execute("""
@@ -204,7 +208,7 @@ def update_balance(user_id, amount, transaction_type, description, admin_id=None
         print(f"❌ Ошибка обновления баланса: {e}")
         return None
 
-def get_transactions(user_id, limit=10):
+def get_transactions(user_id, limit=15):
     try:
         conn = get_db()
         cursor = conn.cursor()
@@ -251,7 +255,7 @@ def back_button():
 def admin_panel_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton("📦 Товары", callback_data="admin_products"),
+        types.InlineKeyboardButton("📦 Управление товарами", callback_data="admin_products"),
         types.InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
     )
     keyboard.add(
@@ -259,10 +263,13 @@ def admin_panel_menu():
         types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
     )
     keyboard.add(
-        types.InlineKeyboardButton("➕ Добавить товар", callback_data="product_add"),
         types.InlineKeyboardButton("🔙 Главное меню", callback_data="back")
     )
     return keyboard
+
+# =========================
+# ТОВАРЫ
+# =========================
 
 def products_list_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=1)
@@ -288,7 +295,8 @@ def products_list_menu():
                         callback_data=f"product_view_{product[0]}"
                     )
                 )
-    except:
+    except Exception as e:
+        print(f"Ошибка загрузки товаров: {e}")
         keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка загрузки", callback_data="ignore"))
     
     keyboard.add(
@@ -326,9 +334,6 @@ def balance_management_menu():
     )
     keyboard.add(
         types.InlineKeyboardButton("📊 История транзакций", callback_data="balance_history"),
-        types.InlineKeyboardButton("👤 Найти пользователя", callback_data="balance_find_user")
-    )
-    keyboard.add(
         types.InlineKeyboardButton("🔙 Админ-панель", callback_data="admin_panel")
     )
     return keyboard
@@ -360,9 +365,10 @@ def user_list_menu(page=1, per_page=5):
             keyboard.add(types.InlineKeyboardButton("📭 Пользователей нет", callback_data="ignore"))
         else:
             for user in users:
+                name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
                 keyboard.add(
                     types.InlineKeyboardButton(
-                        f"👤 @{user[2] or user[1]} - {user[3]}₽",
+                        f"{name} - {user[3]}₽",
                         callback_data=f"user_balance_{user[0]}"
                     )
                 )
@@ -383,8 +389,9 @@ def user_list_menu(page=1, per_page=5):
         if nav_buttons:
             keyboard.row(*nav_buttons)
             
-    except:
-        keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка", callback_data="ignore"))
+    except Exception as e:
+        print(f"Ошибка загрузки пользователей: {e}")
+        keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка загрузки", callback_data="ignore"))
     
     keyboard.add(
         types.InlineKeyboardButton("🔙 Управление балансом", callback_data="admin_balance")
@@ -394,11 +401,11 @@ def user_list_menu(page=1, per_page=5):
 def user_balance_menu(user_id):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton("➕ Выдать 100₽", callback_data=f"user_add_{user_id}_100"),
-        types.InlineKeyboardButton("➕ Выдать 500₽", callback_data=f"user_add_{user_id}_500")
+        types.InlineKeyboardButton("➕ +100₽", callback_data=f"user_add_{user_id}_100"),
+        types.InlineKeyboardButton("➕ +500₽", callback_data=f"user_add_{user_id}_500")
     )
     keyboard.add(
-        types.InlineKeyboardButton("➕ Выдать 1000₽", callback_data=f"user_add_{user_id}_1000"),
+        types.InlineKeyboardButton("➕ +1000₽", callback_data=f"user_add_{user_id}_1000"),
         types.InlineKeyboardButton("💸 Своя сумма", callback_data=f"user_custom_{user_id}")
     )
     keyboard.add(
@@ -407,12 +414,8 @@ def user_balance_menu(user_id):
     )
     return keyboard
 
-# =========================
-# СТАТИСТИКА
-# =========================
-
 def stats_menu():
-    keyboard = types.InlineKeyboardMarkup()
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(
         types.InlineKeyboardButton("📊 Общая статистика", callback_data="stats_general"),
         types.InlineKeyboardButton("📈 Топ пользователей", callback_data="stats_top")
@@ -432,7 +435,8 @@ def start(message):
     
     keyboard = main_menu()
     if is_admin(message.from_user.id):
-        keyboard.add(types.InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel"))
+        admin_button = types.InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")
+        keyboard.add(admin_button)
     
     bot.send_message(
         message.chat.id,
@@ -449,6 +453,102 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     if call.data == "ignore":
+        bot.answer_callback_query(call.id)
+        return
+    
+    # ====== КАТАЛОГ ======
+    if call.data == "catalog":
+        keyboard = types.InlineKeyboardMarkup()
+        
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name, price FROM products WHERE is_active = TRUE ORDER BY id"
+            )
+            products = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            
+            if products:
+                for product in products:
+                    keyboard.add(
+                        types.InlineKeyboardButton(
+                            f"{product[1]} — {product[2]} ₽",
+                            callback_data=f"buy_{product[0]}"
+                        )
+                    )
+            else:
+                keyboard.add(types.InlineKeyboardButton("📭 Товаров пока нет", callback_data="ignore"))
+        except Exception as e:
+            print(f"Ошибка каталога: {e}")
+            keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка загрузки", callback_data="ignore"))
+        
+        keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+        
+        bot.edit_message_text(
+            "🛒 <b>КАТАЛОГ</b>\n\nВыберите товар для покупки:",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        bot.answer_callback_query(call.id)
+        return
+    
+    if call.data.startswith("buy_"):
+        product_id = int(call.data.split("_")[1])
+        bot.answer_callback_query(
+            call.id,
+            "💰 Покупка будет доступна после настройки оплаты!",
+            show_alert=True
+        )
+        return
+    
+    # ====== ПРОФИЛЬ ======
+    if call.data == "profile":
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT balance FROM users WHERE telegram_id = %s",
+                (call.from_user.id,)
+            )
+            user = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            balance = user[0] if user else 0
+            
+            bot.edit_message_text(
+                f"👤 <b>ПРОФИЛЬ</b>\n\n"
+                f"🆔 ID: <code>{call.from_user.id}</code>\n"
+                f"💰 Баланс: <b>{balance} ₽</b>",
+                call.message.chat.id,
+                call.message.message_id,
+                parse_mode="HTML",
+                reply_markup=back_button()
+            )
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+        return
+    
+    # ====== ОСТАЛЬНЫЕ РАЗДЕЛЫ ======
+    if call.data in ["balance", "purchases", "promo", "support"]:
+        texts = {
+            "balance": "💰 <b>БАЛАНС</b>\n\nВаш баланс отображается в профиле.",
+            "purchases": "📦 <b>МОИ ПОКУПКИ</b>\n\nПокупок пока нет.",
+            "promo": "🎟 <b>ПРОМОКОД</b>\n\nСкоро будет доступно.",
+            "support": "💬 <b>ПОДДЕРЖКА</b>\n\nОбратитесь к администратору."
+        }
+        
+        bot.edit_message_text(
+            texts[call.data],
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=back_button()
+        )
         bot.answer_callback_query(call.id)
         return
     
@@ -485,31 +585,15 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         return
     
-    # ====== ВЫДАТЬ ДЕНЬГИ ======
-    if call.data == "balance_add":
+    # ====== ВЫДАТЬ/СПИСАТЬ ДЕНЬГИ ======
+    if call.data in ["balance_add", "balance_remove"]:
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ У вас нет доступа!", show_alert=True)
             return
         
+        action = "ВЫДАТЬ" if call.data == "balance_add" else "СПИСАТЬ"
         bot.edit_message_text(
-            "➕ <b>ВЫДАТЬ ДЕНЬГИ</b>\n\n"
-            "Выберите пользователя:",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=user_list_menu()
-        )
-        bot.answer_callback_query(call.id)
-        return
-    
-    # ====== СПИСАТЬ ДЕНЬГИ ======
-    if call.data == "balance_remove":
-        if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "⛔ У вас нет доступа!", show_alert=True)
-            return
-        
-        bot.edit_message_text(
-            "➖ <b>СПИСАТЬ ДЕНЬГИ</b>\n\n"
+            f"{'➕' if call.data == 'balance_add' else '➖'} <b>{action} ДЕНЬГИ</b>\n\n"
             "Выберите пользователя:",
             call.message.chat.id,
             call.message.message_id,
@@ -536,10 +620,11 @@ def handle_callback(call):
         user = get_user_by_telegram_id(user_id)
         
         if user:
+            name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
             text = (
                 f"👤 <b>ПОЛЬЗОВАТЕЛЬ</b>\n\n"
                 f"🆔 ID: <code>{user[1]}</code>\n"
-                f"👤 Username: @{user[2] or 'Не указан'}\n"
+                f"👤 Username: {name}\n"
                 f"💰 Баланс: <b>{user[3]} ₽</b>"
             )
             
@@ -572,10 +657,10 @@ def handle_callback(call):
             if new_balance is not None:
                 bot.answer_callback_query(
                     call.id, 
-                    f"✅ Выдано {amount}₽ пользователю @{user[2] or user[1]}"
+                    f"✅ Выдано {amount}₽ пользователю!"
                 )
                 
-                # Отправляем уведомление пользователю
+                # Уведомление пользователю
                 try:
                     bot.send_message(
                         user[1],
@@ -590,10 +675,11 @@ def handle_callback(call):
                 # Обновляем сообщение
                 user = get_user_by_telegram_id(user_id)
                 if user:
+                    name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
                     text = (
                         f"👤 <b>ПОЛЬЗОВАТЕЛЬ</b>\n\n"
                         f"🆔 ID: <code>{user[1]}</code>\n"
-                        f"👤 Username: @{user[2] or 'Не указан'}\n"
+                        f"👤 Username: {name}\n"
                         f"💰 Баланс: <b>{user[3]} ₽</b>"
                     )
                     bot.edit_message_text(
@@ -605,83 +691,6 @@ def handle_callback(call):
                     )
             else:
                 bot.answer_callback_query(call.id, "❌ Ошибка при выдаче!", show_alert=True)
-        return
-    
-    # ====== СПИСАТЬ СУММУ ======
-    if call.data.startswith("user_remove_"):
-        parts = call.data.split("_")
-        user_id = int(parts[2])
-        amount = -float(parts[3])
-        
-        user = get_user_by_telegram_id(user_id)
-        if user and user[3] >= abs(amount):
-            new_balance = update_balance(
-                user_id, 
-                amount, 
-                "remove", 
-                f"Списание баланса на {abs(amount)}₽",
-                call.from_user.id
-            )
-            
-            if new_balance is not None:
-                bot.answer_callback_query(
-                    call.id, 
-                    f"✅ Списано {abs(amount)}₽ у @{user[2] or user[1]}"
-                )
-                
-                # Отправляем уведомление пользователю
-                try:
-                    bot.send_message(
-                        user[1],
-                        f"💰 <b>СПИСАНИЕ БАЛАНСА</b>\n\n"
-                        f"Сумма: <b>-{abs(amount)} ₽</b>\n"
-                        f"Новый баланс: <b>{new_balance} ₽</b>",
-                        parse_mode="HTML"
-                    )
-                except:
-                    pass
-                
-                # Обновляем сообщение
-                user = get_user_by_telegram_id(user_id)
-                if user:
-                    text = (
-                        f"👤 <b>ПОЛЬЗОВАТЕЛЬ</b>\n\n"
-                        f"🆔 ID: <code>{user[1]}</code>\n"
-                        f"👤 Username: @{user[2] or 'Не указан'}\n"
-                        f"💰 Баланс: <b>{user[3]} ₽</b>"
-                    )
-                    bot.edit_message_text(
-                        text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        parse_mode="HTML",
-                        reply_markup=user_balance_menu(user_id)
-                    )
-            else:
-                bot.answer_callback_query(call.id, "❌ Ошибка при списании!", show_alert=True)
-        else:
-            bot.answer_callback_query(call.id, "❌ Недостаточно средств!", show_alert=True)
-        return
-    
-    # ====== ПОЛЬЗОВАТЕЛЬ - СВОЯ СУММА ======
-    if call.data.startswith("user_custom_"):
-        user_id = int(call.data.split("_")[2])
-        
-        bot.edit_message_text(
-            "💸 <b>ВВЕДИТЕ СУММУ</b>\n\n"
-            "Введите сумму для выдачи (с плюсом) или списания (с минусом):\n\n"
-            "Примеры:\n"
-            "<code>+100</code> - выдать 100₽\n"
-            "<code>-50</code> - списать 50₽\n\n"
-            "Или отправьте 'отмена' для выхода.",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=cancel_button()
-        )
-        
-        bot.register_next_step_handler(call.message, process_custom_balance, user_id)
-        bot.answer_callback_query(call.id)
         return
     
     # ====== ИСТОРИЯ ТРАНЗАКЦИЙ ======
@@ -706,16 +715,20 @@ def handle_callback(call):
         user = get_user_by_telegram_id(user_id)
         transactions = get_transactions(user_id, 15)
         
-        if user and transactions:
-            text = f"📊 <b>ИСТОРИЯ @{user[2] or user[1]}</b>\n\n"
-            
-            for t in transactions:
-                amount = t[1]
-                type_text = "➕" if amount > 0 else "➖"
-                date = t[4].strftime("%d.%m.%Y %H:%M")
-                text += f"{type_text} {amount}₽ | {t[2]}\n"
-                text += f"   📝 {t[3]}\n"
-                text += f"   🕐 {date}\n\n"
+        if user:
+            name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
+            if transactions:
+                text = f"📊 <b>ИСТОРИЯ {name}</b>\n\n"
+                
+                for t in transactions:
+                    amount = t[1]
+                    emoji = "➕" if amount > 0 else "➖"
+                    date = t[4].strftime("%d.%m.%Y %H:%M")
+                    text += f"{emoji} <b>{amount}₽</b> | {t[2]}\n"
+                    text += f"   📝 {t[3]}\n"
+                    text += f"   🕐 {date}\n\n"
+            else:
+                text = f"📭 У пользователя {name} нет транзакций"
             
             keyboard = types.InlineKeyboardMarkup()
             keyboard.add(
@@ -728,13 +741,6 @@ def handle_callback(call):
                 call.message.message_id,
                 parse_mode="HTML",
                 reply_markup=keyboard
-            )
-        else:
-            bot.edit_message_text(
-                "📭 У пользователя нет транзакций",
-                call.message.chat.id,
-                call.message.message_id,
-                reply_markup=back_button()
             )
         bot.answer_callback_query(call.id)
         return
@@ -767,8 +773,8 @@ def handle_callback(call):
             cursor.execute("SELECT COUNT(*) FROM products WHERE is_active = TRUE")
             total_products = cursor.fetchone()[0]
             
-            cursor.execute("SELECT SUM(balance) FROM users")
-            total_balance = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT COALESCE(SUM(balance), 0) FROM users")
+            total_balance = cursor.fetchone()[0]
             
             cursor.execute("SELECT COUNT(*) FROM orders")
             total_orders = cursor.fetchone()[0]
@@ -815,7 +821,8 @@ def handle_callback(call):
             
             if top_users:
                 for i, user in enumerate(top_users, 1):
-                    text += f"{i}. @{user[0] or 'Пользователь'} - <b>{user[1]} ₽</b>\n"
+                    name = f"@{user[0]}" if user[0] else "Пользователь"
+                    text += f"{i}. {name} - <b>{user[1]} ₽</b>\n"
             else:
                 text += "📭 Пока нет пользователей с балансом"
             
@@ -830,14 +837,15 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
         return
     
-    # ====== ОБРАБОТКА ТОВАРОВ ======
+    # ====== УПРАВЛЕНИЕ ТОВАРАМИ ======
     if call.data == "admin_products":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ У вас нет доступа!", show_alert=True)
             return
         
         bot.edit_message_text(
-            "📦 <b>СПИСОК ТОВАРОВ</b>\n\nПоследние 10 товаров:",
+            "📦 <b>УПРАВЛЕНИЕ ТОВАРАМИ</b>\n\n"
+            "Список товаров:",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
@@ -846,8 +854,176 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         return
     
-    # ====== ОСТАЛЬНЫЕ ОБРАБОТЧИКИ (товары, каталог и т.д.) ======
-    # ... (код из предыдущей версии для товаров)
+    # ====== ПРОСМОТР ТОВАРА ======
+    if call.data.startswith("product_view_"):
+        product_id = int(call.data.split("_")[2])
+        
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name, description, price, category, stock, is_active FROM products WHERE id = %s",
+                (product_id,)
+            )
+            product = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if product:
+                text = (
+                    f"📦 <b>ТОВАР #{product[0]}</b>\n\n"
+                    f"📌 Название: <b>{product[1]}</b>\n"
+                    f"📝 Описание: {product[2] or 'Нет'}\n"
+                    f"💰 Цена: <b>{product[3]} ₽</b>\n"
+                    f"📂 Категория: {product[4] or 'Нет'}\n"
+                    f"📦 В наличии: <b>{product[5]}</b>\n"
+                    f"🔄 Статус: {'✅ Активен' if product[6] else '❌ Неактивен'}"
+                )
+                
+                bot.edit_message_text(
+                    text,
+                    call.message.chat.id,
+                    call.message.message_id,
+                    parse_mode="HTML",
+                    reply_markup=product_view_menu(product_id)
+                )
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+        return
+    
+    # ====== ДОБАВЛЕНИЕ ТОВАРА ======
+    if call.data == "product_add":
+        if not is_admin(call.from_user.id):
+            bot.answer_callback_query(call.id, "⛔ У вас нет доступа!", show_alert=True)
+            return
+        
+        bot.edit_message_text(
+            "➕ <b>ДОБАВЛЕНИЕ ТОВАРА</b>\n\n"
+            "Отправьте данные в формате:\n\n"
+            "<code>Название | Цена | Количество | Категория | Описание</code>\n\n"
+            "Пример:\n"
+            "<code>PlayStation 5 | 50000 | 10 | Консоли | Новая консоль</code>",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=cancel_button()
+        )
+        bot.register_next_step_handler(call.message, process_add_product)
+        bot.answer_callback_query(call.id)
+        return
+    
+    # ====== УДАЛЕНИЕ ТОВАРА ======
+    if call.data.startswith("product_delete_"):
+        product_id = int(call.data.split("_")[2])
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(
+            types.InlineKeyboardButton("✅ Да, удалить", callback_data=f"product_confirm_delete_{product_id}"),
+            types.InlineKeyboardButton("❌ Нет, отмена", callback_data=f"product_view_{product_id}")
+        )
+        
+        bot.edit_message_text(
+            f"⚠️ <b>ВЫ УВЕРЕНЫ?</b>\n\nТовар #{product_id} будет удален.",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        bot.answer_callback_query(call.id)
+        return
+    
+    if call.data.startswith("product_confirm_delete_"):
+        product_id = int(call.data.split("_")[3])
+        
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            bot.edit_message_text(
+                f"✅ Товар #{product_id} удален!",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=products_list_menu()
+            )
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+        return
+    
+    # ====== ВКЛ/ОТКЛ ТОВАРА ======
+    if call.data.startswith("product_toggle_"):
+        product_id = int(call.data.split("_")[2])
+        
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE products SET is_active = NOT is_active WHERE id = %s RETURNING is_active",
+                (product_id,)
+            )
+            new_status = cursor.fetchone()[0]
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            status_text = "активирован" if new_status else "деактивирован"
+            bot.answer_callback_query(call.id, f"✅ Товар {status_text}!")
+            
+            # Обновляем сообщение
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name, description, price, category, stock, is_active FROM products WHERE id = %s",
+                (product_id,)
+            )
+            product = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            if product:
+                text = (
+                    f"📦 <b>ТОВАР #{product[0]}</b>\n\n"
+                    f"📌 Название: <b>{product[1]}</b>\n"
+                    f"📝 Описание: {product[2] or 'Нет'}\n"
+                    f"💰 Цена: <b>{product[3]} ₽</b>\n"
+                    f"📂 Категория: {product[4] or 'Нет'}\n"
+                    f"📦 В наличии: <b>{product[5]}</b>\n"
+                    f"🔄 Статус: {'✅ Активен' if product[6] else '❌ Неактивен'}"
+                )
+                
+                bot.edit_message_text(
+                    text,
+                    call.message.chat.id,
+                    call.message.message_id,
+                    parse_mode="HTML",
+                    reply_markup=product_view_menu(product_id)
+                )
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)}")
+        return
+    
+    # ====== СВОЯ СУММА ======
+    if call.data.startswith("user_custom_"):
+        user_id = int(call.data.split("_")[2])
+        
+        bot.edit_message_text(
+            "💸 <b>ВВЕДИТЕ СУММУ</b>\n\n"
+            "Введите сумму для выдачи (с плюсом) или списания (с минусом):\n\n"
+            "Примеры:\n"
+            "<code>+100</code> - выдать 100₽\n"
+            "<code>-50</code> - списать 50₽\n\n"
+            "Или отправьте 'отмена' для выхода.",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=cancel_button()
+        )
+        
+        bot.register_next_step_handler(call.message, process_custom_balance, user_id)
+        bot.answer_callback_query(call.id)
+        return
     
     # ====== НАЗАД ======
     if call.data == "back":
@@ -864,6 +1040,119 @@ def handle_callback(call):
         )
         bot.answer_callback_query(call.id)
         return
+    
+    # ====== РЕДАКТИРОВАНИЕ ТОВАРА ======
+    if call.data.startswith("product_edit_"):
+        product_id = int(call.data.split("_")[2])
+        
+        bot.edit_message_text(
+            f"✏️ <b>РЕДАКТИРОВАНИЕ ТОВАРА #{product_id}</b>\n\n"
+            "Отправьте новые данные в формате:\n"
+            "<code>Название | Цена | Количество | Категория | Описание</code>",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=cancel_button()
+        )
+        
+        bot.register_next_step_handler(call.message, process_edit_product, product_id)
+        bot.answer_callback_query(call.id)
+        return
+
+# =========================
+# ОБРАБОТКА ДОБАВЛЕНИЯ ТОВАРА
+# =========================
+
+def process_add_product(message):
+    try:
+        data = message.text.split('|')
+        if len(data) < 4:
+            bot.send_message(
+                message.chat.id,
+                "❌ Неверный формат! Нужно: Название | Цена | Количество | Категория | Описание",
+                reply_markup=back_button()
+            )
+            return
+        
+        name = data[0].strip()
+        price = float(data[1].strip())
+        stock = int(data[2].strip())
+        category = data[3].strip() if len(data) > 3 else None
+        description = data[4].strip() if len(data) > 4 else None
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO products (name, description, price, category, stock)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (name, description, price, category, stock))
+        
+        product_id = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        bot.send_message(
+            message.chat.id,
+            f"✅ Товар <b>{name}</b> добавлен! (ID: {product_id})",
+            parse_mode="HTML",
+            reply_markup=products_list_menu()
+        )
+        
+    except Exception as e:
+        bot.send_message(
+            message.chat.id,
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=back_button()
+        )
+
+# =========================
+# ОБРАБОТКА РЕДАКТИРОВАНИЯ ТОВАРА
+# =========================
+
+def process_edit_product(message, product_id):
+    try:
+        data = message.text.split('|')
+        if len(data) < 4:
+            bot.send_message(
+                message.chat.id,
+                "❌ Неверный формат! Нужно: Название | Цена | Количество | Категория | Описание",
+                reply_markup=back_button()
+            )
+            return
+        
+        name = data[0].strip()
+        price = float(data[1].strip())
+        stock = int(data[2].strip())
+        category = data[3].strip() if len(data) > 3 else None
+        description = data[4].strip() if len(data) > 4 else None
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE products 
+            SET name = %s, description = %s, price = %s, category = %s, stock = %s
+            WHERE id = %s
+        """, (name, description, price, category, stock, product_id))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        bot.send_message(
+            message.chat.id,
+            f"✅ Товар #{product_id} обновлен!",
+            parse_mode="HTML",
+            reply_markup=products_list_menu()
+        )
+        
+    except Exception as e:
+        bot.send_message(
+            message.chat.id,
+            f"❌ Ошибка: {str(e)}",
+            reply_markup=back_button()
+        )
 
 # =========================
 # ОБРАБОТКА СВОЕЙ СУММЫ
@@ -896,7 +1185,7 @@ def process_custom_balance(message, user_id):
                 user_id, 
                 amount, 
                 "add", 
-                f"Пополнение баланса на {amount}₽ (админ)",
+                f"Пополнение баланса на {amount}₽",
                 message.from_user.id
             )
             
@@ -927,7 +1216,7 @@ def process_custom_balance(message, user_id):
                     user_id, 
                     amount, 
                     "remove", 
-                    f"Списание баланса на {amount_abs}₽ (админ)",
+                    f"Списание баланса на {amount_abs}₽",
                     message.from_user.id
                 )
                 
@@ -980,13 +1269,6 @@ def process_custom_balance(message, user_id):
         )
 
 # =========================
-# ДОПОЛНИТЕЛЬНЫЕ ОБРАБОТЧИКИ ТОВАРОВ
-# =========================
-
-# (Вставьте сюда обработчики товаров из предыдущего кода)
-# Для краткости пропущены, но они должны быть
-
-# =========================
 # ЗАПУСК БОТА
 # =========================
 
@@ -999,6 +1281,7 @@ if __name__ == "__main__":
             if create_tables():
                 print("✅ Бот готов к работе!")
                 print(f"👑 Админы: {ADMIN_IDS}")
+                print("🤖 Бот запущен!")
                 
                 try:
                     bot.infinity_polling(timeout=10, long_polling_timeout=5)
