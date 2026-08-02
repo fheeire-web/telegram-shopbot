@@ -15,14 +15,15 @@ PAYMENT_INFO = """
 💰 РЕКВИЗИТЫ ДЛЯ ОПЛАТЫ:
 
 💳 Банковская карта:
-Нту
+ Нету 
 
 📱 СБП:
-+79918145417
+89918145417 Любой доступный банк
 
 После оплаты отправь СКРИНШОТ чека сюда.
 
 Сумма пополнения: любая
+Минимальная: 1 ₽
 """
 
 bot = telebot.TeleBot(TOKEN)
@@ -73,7 +74,6 @@ def init_db():
             )
         """)
         
-        # Таблица для заявок на пополнение
         cur.execute("""
             CREATE TABLE IF NOT EXISTS deposits (
                 id SERIAL PRIMARY KEY,
@@ -166,6 +166,21 @@ def add_money(user_id, amount):
     conn = get_db()
     cur = conn.cursor()
     cur.execute("UPDATE users SET balance = balance + %s WHERE id = %s RETURNING balance", (amount, user_id))
+    new_balance = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return new_balance
+
+# ===== ВАЖНО: ДОБАВЛЕНА ФУНКЦИЯ remove_money =====
+def remove_money(tg_id, amount):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT balance FROM users WHERE tg_id = %s", (tg_id,))
+    result = cur.fetchone()
+    if not result or result[0] < amount:
+        conn.close()
+        return None
+    cur.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s RETURNING balance", (amount, tg_id))
     new_balance = cur.fetchone()[0]
     conn.commit()
     conn.close()
@@ -499,7 +514,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         if amount == "custom":
             msg = bot.send_message(
                 call.message.chat.id,
-                "💰 Введи сумму пополнения (от 100 ₽):\n\nПосле оплаты отправь скриншот чека."
+                "💰 Введи сумму пополнения (от 1 ₽):\n\nПосле оплаты отправь скриншот чека."
             )
             bot.register_next_step_handler(msg, process_custom_deposit)
             try:
@@ -512,7 +527,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         amount = int(amount)
         user = get_user(call.from_user.id)
         if user:
-            # Сохраняем заявку
             save_deposit(user[0], amount, None)
             
             kb = types.InlineKeyboardMarkup()
@@ -522,7 +536,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
             bot.send_message(
                 call.message.chat.id,
                 f"💰 ТЫ ВЫБРАЛ {amount} ₽\n\n"
-                "1️⃣ Переведи {amount} ₽ по реквизитам выше\n"
+                "1️⃣ Переведи сумму по реквизитам выше\n"
                 "2️⃣ Сделай скриншот чека\n"
                 "3️⃣ Нажми кнопку ниже и отправь скриншот\n\n"
                 "После проверки админом баланс пополнится!",
@@ -540,8 +554,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         amount = int(call.data.split("_")[2])
         msg = bot.send_message(
             call.message.chat.id,
-            f"📸 Отправь СКРИНШОТ чека на {amount} ₽\n\n"
-            "После проверки баланс пополнится."
+            f"📸 Отправь СКРИНШОТ чека на {amount} ₽\n\nПосле проверки баланс пополнится."
         )
         bot.register_next_step_handler(msg, process_receipt, amount)
         try:
@@ -657,10 +670,8 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             bot.answer_callback_query(call.id, f"❌ Не хватает! Нужно {product[3]}₽", True)
             return
         
-        # Списываем деньги
         new_balance = remove_money(call.from_user.id, product[3])
         
-        # Уменьшаем сток
         conn = get_db()
         cur = conn.cursor()
         cur.execute("UPDATE products SET stock = stock - 1 WHERE id = %s", (product_id,))
@@ -804,7 +815,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             bot.answer_callback_query(call.id, f"✅ Пополнено на {deposit[1]}₽!")
             bot.send_message(call.message.chat.id, f"✅ Заявка #{deposit_id} подтверждена!", reply_markup=admin_menu())
             
-            # Уведомляем пользователя
             conn = get_db()
             cur = conn.cursor()
             cur.execute("SELECT tg_id FROM users WHERE id = %s", (deposit[0],))
@@ -812,7 +822,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             conn.close()
             if user_tg:
                 try:
-                    bot.send_message(user_tg[0], f"💰 БАЛАНС ПОПОЛНЕН!\n\n+{deposit[1]}₽\nНовый баланс: {get_balance(user_tg[0])}₽")
+                    bot.send_message(user_tg[0], f"💰 БАЛАНС ПОПОЛНЕН!\n\n+{deposit[1]}₽")
                 except:
                     pass
         try:
@@ -915,7 +925,6 @@ def process_receipt(msg, amount):
                 reply_markup=menu_button()
             )
             
-            # Уведомление админу
             for admin_id in ADMIN_IDS:
                 try:
                     bot.send_photo(
@@ -932,7 +941,7 @@ def process_custom_deposit(msg):
     try:
         amount = int(msg.text)
         if amount < 100:
-            bot.send_message(msg.chat.id, "❌ Минимальная сумма: 100 ₽")
+            bot.send_message(msg.chat.id, "❌ Минимальная сумма: 1₽")
             return
         
         user = get_user(msg.from_user.id)
@@ -944,8 +953,7 @@ def process_custom_deposit(msg):
             
             bot.send_message(
                 msg.chat.id,
-                f"💰 ТЫ ВЫБРАЛ {amount} ₽\n\n"
-                "Переведи сумму по реквизитам и отправь скриншот чека.",
+                f"💰 ТЫ ВЫБРАЛ {amount} ₽\n\nПереведи сумму по реквизитам и отправь скриншот чека.",
                 reply_markup=kb
             )
     except:
@@ -983,6 +991,7 @@ if __name__ == "__main__":
     
     print("🤖 Бот запущен!")
     
+    # Удаляем вебхук для избежания ошибки 409
     try:
         bot.remove_webhook()
         print("✅ Webhook удален")
