@@ -9,7 +9,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ⚠️ ВАЖНО: Замените на ваш Telegram ID (узнать можно у @userinfobot)
-ADMIN_IDS = [123456789]  # Сюда вставьте свой ID!
+ADMIN_IDS = [7845398556]  # Сюда вставьте свой ID!
 
 bot = telebot.TeleBot(TOKEN)
 
