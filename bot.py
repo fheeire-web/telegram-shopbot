@@ -1,56 +1,68 @@
 import os
 import telebot
 from telebot import types
-import sqlite3
+import psycopg2
 import random
 import string
 import time
 
 TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_IDS = [7845398556]  # Твой ID
 
 bot = telebot.TeleBot(TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
+def get_db():
+    if not DATABASE_URL:
+        raise Exception("❌ DATABASE_URL не найден!")
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect('bot.db')
-    cur = conn.cursor()
-    
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tg_id INTEGER UNIQUE,
-            username TEXT,
-            balance INTEGER DEFAULT 0,
-            ref_code TEXT UNIQUE,
-            invited_by INTEGER DEFAULT 0,
-            referrals_count INTEGER DEFAULT 0,
-            ref_earnings INTEGER DEFAULT 0
-        )
-    ''')
-    
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            category TEXT,
-            price INTEGER,
-            stock INTEGER DEFAULT 0
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                tg_id BIGINT UNIQUE NOT NULL,
+                username TEXT,
+                balance INTEGER DEFAULT 0,
+                ref_code TEXT UNIQUE,
+                invited_by INTEGER DEFAULT 0,
+                referrals_count INTEGER DEFAULT 0,
+                ref_earnings INTEGER DEFAULT 0
+            )
+        ''')
+        
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                category TEXT,
+                price INTEGER,
+                stock INTEGER DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        print("✅ PostgreSQL готов!")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return False
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
 def generate_ref_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 def register_user(tg_id, username, invited_by=None):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
     
-    cur.execute("SELECT id FROM users WHERE tg_id = ?", (tg_id,))
+    cur.execute("SELECT id FROM users WHERE tg_id = %s", (tg_id,))
     user = cur.fetchone()
     
     if user:
@@ -60,14 +72,14 @@ def register_user(tg_id, username, invited_by=None):
     ref_code = generate_ref_code()
     
     cur.execute(
-        "INSERT INTO users (tg_id, username, ref_code, invited_by) VALUES (?, ?, ?, ?)",
+        "INSERT INTO users (tg_id, username, ref_code, invited_by) VALUES (%s, %s, %s, %s) RETURNING id",
         (tg_id, username, ref_code, invited_by or 0)
     )
-    user_id = cur.lastrowid
+    user_id = cur.fetchone()[0]
     
     if invited_by:
-        cur.execute("UPDATE users SET balance = balance + 10, referrals_count = referrals_count + 1, ref_earnings = ref_earnings + 10 WHERE id = ?", (invited_by,))
-        cur.execute("SELECT tg_id FROM users WHERE id = ?", (invited_by,))
+        cur.execute("UPDATE users SET balance = balance + 10, referrals_count = referrals_count + 1, ref_earnings = ref_earnings + 10 WHERE id = %s", (invited_by,))
+        cur.execute("SELECT tg_id FROM users WHERE id = %s", (invited_by,))
         inviter_tg = cur.fetchone()
         if inviter_tg:
             try:
@@ -80,59 +92,57 @@ def register_user(tg_id, username, invited_by=None):
     return user_id
 
 def get_user(tg_id):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, tg_id, username, balance, ref_code, invited_by, referrals_count, ref_earnings FROM users WHERE tg_id = ?", (tg_id,))
+    cur.execute("SELECT id, tg_id, username, balance, ref_code, invited_by, referrals_count, ref_earnings FROM users WHERE tg_id = %s", (tg_id,))
     user = cur.fetchone()
     conn.close()
     return user
 
 def get_user_by_ref_code(ref_code):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, tg_id FROM users WHERE ref_code = ?", (ref_code,))
+    cur.execute("SELECT id, tg_id FROM users WHERE ref_code = %s", (ref_code,))
     user = cur.fetchone()
     conn.close()
     return user
 
 def get_balance(tg_id):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT balance FROM users WHERE tg_id = ?", (tg_id,))
+    cur.execute("SELECT balance FROM users WHERE tg_id = %s", (tg_id,))
     result = cur.fetchone()
     conn.close()
     return result[0] if result else 0
 
 def get_all_users():
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, tg_id, username, balance, ref_code, referrals_count, ref_earnings FROM users")
+    cur.execute("SELECT id, tg_id, username, balance, ref_code, referrals_count, ref_earnings FROM users ORDER BY id")
     users = cur.fetchall()
     conn.close()
     return users
 
 def add_money(user_id, amount):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
-    conn.commit()
-    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    cur.execute("UPDATE users SET balance = balance + %s WHERE id = %s RETURNING balance", (amount, user_id))
     new_balance = cur.fetchone()[0]
+    conn.commit()
     conn.close()
     return new_balance
 
 def remove_money(tg_id, amount):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT balance FROM users WHERE tg_id = ?", (tg_id,))
+    cur.execute("SELECT balance FROM users WHERE tg_id = %s", (tg_id,))
     result = cur.fetchone()
     if not result or result[0] < amount:
         conn.close()
         return None
-    cur.execute("UPDATE users SET balance = balance - ? WHERE tg_id = ?", (amount, tg_id))
-    conn.commit()
-    cur.execute("SELECT balance FROM users WHERE tg_id = ?", (tg_id,))
+    cur.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s RETURNING balance", (amount, tg_id))
     new_balance = cur.fetchone()[0]
+    conn.commit()
     conn.close()
     return new_balance
 
@@ -141,7 +151,7 @@ def is_admin(tg_id):
 
 # ========== ТОВАРЫ ==========
 def get_all_products():
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT id, name, category, price, stock FROM products ORDER BY category, name")
     products = cur.fetchall()
@@ -149,15 +159,15 @@ def get_all_products():
     return products
 
 def get_products_by_category(category):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, category, price, stock FROM products WHERE category = ? ORDER BY name", (category,))
+    cur.execute("SELECT id, name, category, price, stock FROM products WHERE category = %s ORDER BY name", (category,))
     products = cur.fetchall()
     conn.close()
     return products
 
 def get_categories():
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT DISTINCT category FROM products")
     categories = cur.fetchall()
@@ -165,31 +175,31 @@ def get_categories():
     return [c[0] for c in categories]
 
 def add_product(name, category, price, stock):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO products (name, category, price, stock) VALUES (?, ?, ?, ?)",
+        "INSERT INTO products (name, category, price, stock) VALUES (%s, %s, %s, %s)",
         (name, category, price, stock)
     )
     conn.commit()
     conn.close()
 
 def delete_product(product_id):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    cur.execute("DELETE FROM products WHERE id = %s", (product_id,))
     conn.commit()
     conn.close()
 
 def get_product_by_id(product_id):
-    conn = sqlite3.connect('bot.db')
+    conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, category, price, stock FROM products WHERE id = ?", (product_id,))
+    cur.execute("SELECT id, name, category, price, stock FROM products WHERE id = %s", (product_id,))
     product = cur.fetchone()
     conn.close()
     return product
 
-# ========== КНОПКИ МЕНЮ ==========
+# ========== КНОПКИ ==========
 def menu_button():
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("🔙 Меню", callback_data="menu"))
@@ -309,7 +319,7 @@ def start(msg):
             reply_markup=main_menu(msg.from_user.id)
         )
     except Exception as e:
-        print(f"Ошибка отправки фото: {e}")
+        print(f"Ошибка фото: {e}")
         bot.send_message(
             msg.chat.id,
             "👋 Добро пожаловать в магазин!\n\nВыбери нужный раздел:",
@@ -383,7 +393,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
     # ===== СТАТИСТИКА =====
     if call.data == "stats":
         user = get_user(call.from_user.id)
-        conn = sqlite3.connect('bot.db')
+        conn = get_db()
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM users")
         total_users = cur.fetchone()[0]
@@ -434,7 +444,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== КУПИТЬ ТОВАР (для пользователя) =====
+    # ===== КУПИТЬ ТОВАР =====
     if call.data.startswith("user_buy_"):
         product_id = int(call.data.split("_")[2])
         product = get_product_by_id(product_id)
@@ -454,15 +464,14 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         
         new_balance = remove_money(call.from_user.id, product[3])
         
-        conn = sqlite3.connect('bot.db')
+        conn = get_db()
         cur = conn.cursor()
-        cur.execute("UPDATE products SET stock = stock - 1 WHERE id = ?", (product_id,))
+        cur.execute("UPDATE products SET stock = stock - 1 WHERE id = %s", (product_id,))
         conn.commit()
         conn.close()
         
         bot.answer_callback_query(call.id, f"✅ Куплено {product[1]} за {product[3]}₽!")
         
-        # Отправляем подтверждение
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔙 В каталог", callback_data="catalog"))
         kb.add(types.InlineKeyboardButton("🏠 Меню", callback_data="menu"))
@@ -474,7 +483,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.delete_message(call.message.chat.id, call.message.message_id)
         return
 
-    # ===== АДМИН-ПАНЕЛЬ =====
+    # ===== АДМИН =====
     if call.data == "admin":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет доступа!", True)
@@ -484,7 +493,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ТОВАРЫ (админ) =====
     if call.data == "admin_products":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
@@ -494,7 +502,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ПРОСМОТР ТОВАРА (админ) =====
     if call.data.startswith("product_"):
         product_id = int(call.data.split("_")[1])
         p = get_product_by_id(product_id)
@@ -505,7 +512,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ДОБАВИТЬ ТОВАР =====
     if call.data == "add_product":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
@@ -517,7 +523,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== УДАЛИТЬ ТОВАР =====
     if call.data.startswith("delete_"):
         product_id = int(call.data.split("_")[1])
         product = get_product_by_id(product_id)
@@ -537,12 +542,11 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ВЫБОР ПОЛЬЗОВАТЕЛЯ =====
     if call.data.startswith("user_"):
         user_id = int(call.data.split("_")[1])
-        conn = sqlite3.connect('bot.db')
+        conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT tg_id, username, balance FROM users WHERE id = ?", (user_id,))
+        cur.execute("SELECT tg_id, username, balance FROM users WHERE id = %s", (user_id,))
         u = cur.fetchone()
         conn.close()
         if u:
@@ -553,7 +557,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ВЫДАТЬ ДЕНЬГИ =====
     if call.data.startswith("add_"):
         parts = call.data.split("_")
         user_id = int(parts[1])
@@ -561,9 +564,9 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         
         new_bal = add_money(user_id, amount)
         
-        conn = sqlite3.connect('bot.db')
+        conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT tg_id FROM users WHERE id = ?", (user_id,))
+        cur.execute("SELECT tg_id FROM users WHERE id = %s", (user_id,))
         tg = cur.fetchone()
         conn.close()
         
@@ -575,9 +578,9 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         
         bot.answer_callback_query(call.id, f"✅ +{amount}₽")
         
-        conn = sqlite3.connect('bot.db')
+        conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT tg_id, username, balance FROM users WHERE id = ?", (user_id,))
+        cur.execute("SELECT tg_id, username, balance FROM users WHERE id = %s", (user_id,))
         u = cur.fetchone()
         conn.close()
         if u:
@@ -607,12 +610,20 @@ def process_add_product(msg):
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    init_db()
+    print("🤖 Запуск бота...")
+    
+    if not DATABASE_URL:
+        print("❌ ОШИБКА: DATABASE_URL не найден!")
+        exit(1)
+    
+    if not init_db():
+        print("❌ Ошибка подключения к БД!")
+        exit(1)
+    
     print("🤖 Бот запущен!")
     
     try:
         bot.remove_webhook()
-        print("✅ Webhook removed")
     except:
         pass
     
