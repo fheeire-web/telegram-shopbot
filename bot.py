@@ -10,18 +10,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_IDS = [7845398556]  # Твой ID
 
-# ТВОИ РЕКВИЗИТЫ СБП
-PAYMENT_INFO = """
-💰 РЕКВИЗИТЫ ДЛЯ ОПЛАТЫ:
-
-📱 СБП (СБЕР):
-+7 991 814-54-17
-
-После оплаты отправь СКРИНШОТ чека сюда.
-
-Сумма пополнения: от 1 ₽
-"""
-
 bot = telebot.TeleBot(TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -482,9 +470,14 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         )
         kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu"))
         
+        # ===== ВАЖНО: РЕКВИЗИТЫ ВСЕГДА ПОКАЗЫВАЕМ =====
         bot.send_message(
             call.message.chat.id,
-            PAYMENT_INFO + "\n\nВыбери сумму пополнения:",
+            "💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
+            "📱 СБП (СБЕР): +7 991 814-54-17\n\n"
+            "После оплаты отправь СКРИНШОТ чека.\n"
+            "Сумма пополнения: от 1 ₽\n\n"
+            "Выбери сумму пополнения:",
             reply_markup=kb
         )
         try:
@@ -500,7 +493,9 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         if amount == "custom":
             msg = bot.send_message(
                 call.message.chat.id,
-                "💰 Введи сумму пополнения (от 1 ₽):\n\nПосле оплаты отправь скриншот чека."
+                "💰 Введи сумму пополнения (от 1 ₽):\n\n"
+                "📱 СБП: +7 991 814-54-17\n\n"
+                "После оплаты отправь скриншот чека."
             )
             bot.register_next_step_handler(msg, process_custom_deposit)
             try:
@@ -522,6 +517,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
             bot.send_message(
                 call.message.chat.id,
                 f"💰 ТЫ ВЫБРАЛ {amount} ₽\n\n"
+                "📱 СБП: +7 991 814-54-17\n\n"
                 "1️⃣ Переведи сумму по реквизитам выше\n"
                 "2️⃣ Сделай скриншот чека\n"
                 "3️⃣ Нажми кнопку ниже и отправь скриншот\n\n"
@@ -540,7 +536,8 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         amount = int(call.data.split("_")[2])
         msg = bot.send_message(
             call.message.chat.id,
-            f"📸 Отправь СКРИНШОТ чека на {amount} ₽\n\nПосле проверки баланс пополнится."
+            f"📸 Отправь СКРИНШОТ чека на {amount} ₽\n\n"
+            "После проверки баланс пополнится."
         )
         bot.register_next_step_handler(msg, process_receipt, amount)
         try:
@@ -908,7 +905,9 @@ def process_custom_deposit(msg):
             
             bot.send_message(
                 msg.chat.id,
-                f"💰 ТЫ ВЫБРАЛ {amount} ₽\n\nПереведи сумму по реквизитам и отправь скриншот чека.",
+                f"💰 ТЫ ВЫБРАЛ {amount} ₽\n\n"
+                "📱 СБП: +7 991 814-54-17\n\n"
+                "Переведи сумму по реквизитам и отправь скриншот чека.",
                 reply_markup=kb
             )
     except:
