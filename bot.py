@@ -1,10 +1,64 @@
 import os
+import psycopg2
 import telebot
 from telebot import types
 
 TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 bot = telebot.TeleBot(TOKEN)
+
+
+# =========================
+# ПОДКЛЮЧЕНИЕ К БАЗЕ
+# =========================
+
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
+
+
+def create_tables():
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT UNIQUE NOT NULL,
+            username VARCHAR(255),
+            balance NUMERIC(10,2) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+# =========================
+# ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯ
+# =========================
+
+def register_user(message):
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO users (telegram_id, username)
+        VALUES (%s, %s)
+        ON CONFLICT (telegram_id)
+        DO UPDATE SET username = EXCLUDED.username
+    """, (
+        message.from_user.id,
+        message.from_user.username
+    ))
+
+    conn.commit()
+
+    cursor.close()
+    conn.close()
 
 
 # =========================
@@ -12,21 +66,40 @@ bot = telebot.TeleBot(TOKEN)
 # =========================
 
 def main_menu():
+
     keyboard = types.InlineKeyboardMarkup(row_width=2)
 
     keyboard.add(
-        types.InlineKeyboardButton("🛒 Каталог", callback_data="catalog"),
-        types.InlineKeyboardButton("👤 Профиль", callback_data="profile")
+        types.InlineKeyboardButton(
+            "🛒 Каталог",
+            callback_data="catalog"
+        ),
+        types.InlineKeyboardButton(
+            "👤 Профиль",
+            callback_data="profile"
+        )
     )
 
     keyboard.add(
-        types.InlineKeyboardButton("📦 Мои покупки", callback_data="purchases"),
-        types.InlineKeyboardButton("💰 Баланс", callback_data="balance")
+        types.InlineKeyboardButton(
+            "📦 Мои покупки",
+            callback_data="purchases"
+        ),
+        types.InlineKeyboardButton(
+            "💰 Баланс",
+            callback_data="balance"
+        )
     )
 
     keyboard.add(
-        types.InlineKeyboardButton("🎟 Промокод", callback_data="promo"),
-        types.InlineKeyboardButton("💬 Поддержка", callback_data="support")
+        types.InlineKeyboardButton(
+            "🎟 Промокод",
+            callback_data="promo"
+        ),
+        types.InlineKeyboardButton(
+            "💬 Поддержка",
+            callback_data="support"
+        )
     )
 
     return keyboard
@@ -39,11 +112,12 @@ def main_menu():
 @bot.message_handler(commands=["start"])
 def start(message):
 
+    register_user(message)
+
     bot.send_message(
         message.chat.id,
         "👋 <b>Добро пожаловать в магазин!</b>\n\n"
-        "Здесь вы можете приобрести цифровые товары.\n\n"
-        "👇 Выберите нужный раздел:",
+        "Выберите нужный раздел:",
         parse_mode="HTML",
         reply_markup=main_menu()
     )
@@ -56,7 +130,6 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: True)
 def buttons(call):
 
-    # КАТАЛОГ
     if call.data == "catalog":
 
         keyboard = types.InlineKeyboardMarkup()
@@ -91,110 +164,55 @@ def buttons(call):
             reply_markup=keyboard
         )
 
-
-    # ТОВАР 1
-    elif call.data == "product_1":
-
-        keyboard = types.InlineKeyboardMarkup()
-
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "💳 Купить",
-                callback_data="buy_1"
-            )
-        )
-
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔙 Назад",
-                callback_data="catalog"
-            )
-        )
-
-        bot.edit_message_text(
-            "🎮 <b>ТОВАР №1</b>\n\n"
-            "Описание товара.\n\n"
-            "💰 Цена: <b>100 ₽</b>",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-
-
-    # ТОВАР 2
-    elif call.data == "product_2":
-
-        keyboard = types.InlineKeyboardMarkup()
-
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "💳 Купить",
-                callback_data="buy_2"
-            )
-        )
-
-        keyboard.add(
-            types.InlineKeyboardButton(
-                "🔙 Назад",
-                callback_data="catalog"
-            )
-        )
-
-        bot.edit_message_text(
-            "⭐ <b>ТОВАР №2</b>\n\n"
-            "Описание товара.\n\n"
-            "💰 Цена: <b>200 ₽</b>",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-
-
-    # ПРОФИЛЬ
     elif call.data == "profile":
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT balance FROM users WHERE telegram_id = %s",
+            (call.from_user.id,)
+        )
+
+        user = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        balance = user[0] if user else 0
 
         bot.edit_message_text(
             "👤 <b>ПРОФИЛЬ</b>\n\n"
             f"🆔 ID: <code>{call.from_user.id}</code>\n"
-            "💰 Баланс: <b>0 ₽</b>\n"
-            "📦 Покупок: <b>0</b>",
+            f"💰 Баланс: <b>{balance} ₽</b>",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
             reply_markup=back_button()
         )
 
-
-    # БАЛАНС
     elif call.data == "balance":
 
         bot.edit_message_text(
             "💰 <b>БАЛАНС</b>\n\n"
-            "Ваш баланс: <b>0 ₽</b>\n\n"
-            "Пополнение баланса пока недоступно.",
+            "Ваш баланс отображается в профиле.",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
             reply_markup=back_button()
         )
 
-
-    # ПОКУПКИ
     elif call.data == "purchases":
 
         bot.edit_message_text(
             "📦 <b>МОИ ПОКУПКИ</b>\n\n"
-            "У вас пока нет покупок.",
+            "Покупок пока нет.",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
             reply_markup=back_button()
         )
 
-
-    # ПРОМО
     elif call.data == "promo":
 
         bot.edit_message_text(
@@ -206,22 +224,17 @@ def buttons(call):
             reply_markup=back_button()
         )
 
-
-    # ПОДДЕРЖКА
     elif call.data == "support":
 
         bot.edit_message_text(
             "💬 <b>ПОДДЕРЖКА</b>\n\n"
-            "Если у вас возникли проблемы с покупкой, "
-            "обратитесь к администратору.",
+            "Обратитесь к администратору.",
             call.message.chat.id,
             call.message.message_id,
             parse_mode="HTML",
             reply_markup=back_button()
         )
 
-
-    # НАЗАД
     elif call.data == "back":
 
         bot.edit_message_text(
@@ -233,20 +246,19 @@ def buttons(call):
             reply_markup=main_menu()
         )
 
-
-    # ПОКУПКА
-    elif call.data.startswith("buy_"):
+    elif call.data in ["product_1", "product_2"]:
 
         bot.answer_callback_query(
             call.id,
-            "Покупка пока находится в разработке."
+            "Покупка будет доступна после подключения оплаты."
         )
+        return
 
     bot.answer_callback_query(call.id)
 
 
 # =========================
-# КНОПКА НАЗАД
+# НАЗАД
 # =========================
 
 def back_button():
@@ -266,5 +278,7 @@ def back_button():
 # =========================
 # ЗАПУСК
 # =========================
+
+create_tables()
 
 bot.infinity_polling()
