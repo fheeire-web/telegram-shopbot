@@ -10,20 +10,16 @@ TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_IDS = [7845398556]  # Твой ID
 
-# ТВОИ РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА
+# ТВОИ РЕКВИЗИТЫ СБП
 PAYMENT_INFO = """
 💰 РЕКВИЗИТЫ ДЛЯ ОПЛАТЫ:
 
-💳 Банковская карта:
- Нету 
-
-📱 СБП:
-89918145417 Любой доступный банк
+📱 СБП (СБЕР):
++7 991 814-54-17
 
 После оплаты отправь СКРИНШОТ чека сюда.
 
-Сумма пополнения: любая
-Минимальная: 1 ₽
+Сумма пополнения: от 1 ₽
 """
 
 bot = telebot.TeleBot(TOKEN)
@@ -59,18 +55,6 @@ def init_db():
                 category TEXT,
                 price INTEGER DEFAULT 0,
                 stock INTEGER DEFAULT 0
-            )
-        """)
-        
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER,
-                product_id INTEGER,
-                amount INTEGER,
-                payment_type TEXT,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
@@ -157,7 +141,7 @@ def get_balance(tg_id):
 def get_all_users():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, tg_id, username, balance, ref_code, referrals_count, ref_earnings FROM users ORDER BY id")
+    cur.execute("SELECT id, tg_id, username, balance FROM users ORDER BY id")
     users = cur.fetchall()
     conn.close()
     return users
@@ -171,7 +155,6 @@ def add_money(user_id, amount):
     conn.close()
     return new_balance
 
-# ===== ВАЖНО: ДОБАВЛЕНА ФУНКЦИЯ remove_money =====
 def remove_money(tg_id, amount):
     conn = get_db()
     cur = conn.cursor()
@@ -205,7 +188,7 @@ def get_pending_deposits():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT d.id, d.user_id, d.amount, d.photo_id, d.created_at, u.username, u.tg_id
+        SELECT d.id, d.user_id, d.amount, d.photo_id, u.username, u.tg_id
         FROM deposits d
         JOIN users u ON d.user_id = u.id
         WHERE d.status = 'pending'
@@ -366,9 +349,10 @@ def users_menu():
 def user_actions_menu(user_id):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
+        types.InlineKeyboardButton("➕ 1₽", callback_data=f"add_{user_id}_1"),
+        types.InlineKeyboardButton("➕ 10₽", callback_data=f"add_{user_id}_10"),
         types.InlineKeyboardButton("➕ 100₽", callback_data=f"add_{user_id}_100"),
-        types.InlineKeyboardButton("➕ 500₽", callback_data=f"add_{user_id}_500"),
-        types.InlineKeyboardButton("➕ 1000₽", callback_data=f"add_{user_id}_1000")
+        types.InlineKeyboardButton("➕ 500₽", callback_data=f"add_{user_id}_500")
     )
     kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="users"))
     return kb
@@ -381,13 +365,13 @@ def deposits_menu():
     else:
         for d in deposits:
             kb.add(types.InlineKeyboardButton(
-                f"💳 Заявка #{d[0]} - {d[2]}₽ от @{d[5] or d[6]}",
+                f"💳 Заявка #{d[0]} - {d[2]}₽ от @{d[4] or d[5]}",
                 callback_data=f"deposit_{d[0]}"
             ))
     kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin"))
     return kb
 
-def deposit_actions_menu(deposit_id, user_id, amount):
+def deposit_actions_menu(deposit_id):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
         types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_{deposit_id}"),
@@ -488,8 +472,10 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
     if call.data == "deposit":
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(
+            types.InlineKeyboardButton("💰 1 ₽", callback_data="deposit_1"),
+            types.InlineKeyboardButton("💰 10 ₽", callback_data="deposit_10"),
+            types.InlineKeyboardButton("💰 50 ₽", callback_data="deposit_50"),
             types.InlineKeyboardButton("💰 100 ₽", callback_data="deposit_100"),
-            types.InlineKeyboardButton("💰 250 ₽", callback_data="deposit_250"),
             types.InlineKeyboardButton("💰 500 ₽", callback_data="deposit_500"),
             types.InlineKeyboardButton("💰 1000 ₽", callback_data="deposit_1000"),
             types.InlineKeyboardButton("💰 Другая сумма", callback_data="deposit_custom")
@@ -575,44 +561,13 @@ https://t.me/{bot.get_me().username}?start={user[4]}
 
 👥 Приглашено: {user[6]} чел.
 💰 Заработано: {user[7]} ₽
-💵 За каждого реферала: +10 ₽
-
-📊 Как это работает:
-1. Отправь ссылку другу
-2. Он переходит по ссылке
-3. Ты получаешь +10 ₽ на баланс"""
+💵 За каждого реферала: +10 ₽"""
             
             bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
             try:
                 bot.delete_message(call.message.chat.id, call.message.message_id)
             except:
                 pass
-        bot.answer_callback_query(call.id)
-        return
-
-    # ===== СТАТИСТИКА =====
-    if call.data == "stats":
-        user = get_user(call.from_user.id)
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        total_users = cur.fetchone()[0]
-        cur.execute("SELECT SUM(balance) FROM users")
-        total_balance = cur.fetchone()[0] or 0
-        conn.close()
-        
-        text = f"""📊 СТАТИСТИКА МАГАЗИНА
-
-👥 Всего пользователей: {total_users}
-💰 Общий баланс: {total_balance} ₽
-👤 Твои рефералы: {user[6] if user else 0}
-💸 Заработано: {user[7] if user else 0} ₽"""
-        
-        bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
-        try:
-            bot.delete_message(call.message.chat.id, call.message.message_id)
-        except:
-            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -760,7 +715,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             pass
         return
 
-    # ===== ЗАЯВКИ НА ПОПОЛНЕНИЕ =====
+    # ===== ЗАЯВКИ =====
     if call.data == "deposits":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
@@ -799,8 +754,8 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             
             bot.send_message(
                 call.message.chat.id,
-                f"💳 ЗАЯВКА #{deposit[0]}\n👤 @{deposit[4] or deposit[5]}\n💰 {deposit[2]} ₽\n\nПодтвердить или отклонить?",
-                reply_markup=deposit_actions_menu(deposit[0], deposit[1], deposit[2])
+                f"💳 ЗАЯВКА #{deposit[0]}\n👤 @{deposit[4] or deposit[5]}\n💰 {deposit[2]} ₽",
+                reply_markup=deposit_actions_menu(deposit[0])
             )
         bot.answer_callback_query(call.id)
         return
@@ -912,7 +867,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
                 pass
         return
 
-# ===== ОБРАБОТКА ФОТО ЧЕКА =====
+# ===== ОБРАБОТКА =====
 def process_receipt(msg, amount):
     if msg.photo:
         photo_id = msg.photo[-1].file_id
@@ -921,7 +876,7 @@ def process_receipt(msg, amount):
             deposit_id = save_deposit(user[0], amount, photo_id)
             bot.send_message(
                 msg.chat.id,
-                f"✅ ЧЕК ПРИНЯТ!\n\nСумма: {amount} ₽\nЗаявка #{deposit_id}\n\nПосле проверки админом баланс будет пополнен.",
+                f"✅ ЧЕК ПРИНЯТ!\n\nСумма: {amount} ₽\nЗаявка #{deposit_id}\n\nПосле проверки админом баланс пополнится.",
                 reply_markup=menu_button()
             )
             
@@ -940,8 +895,8 @@ def process_receipt(msg, amount):
 def process_custom_deposit(msg):
     try:
         amount = int(msg.text)
-        if amount < 100:
-            bot.send_message(msg.chat.id, "❌ Минимальная сумма: 1₽")
+        if amount < 1:
+            bot.send_message(msg.chat.id, "❌ Минимальная сумма: 1 ₽")
             return
         
         user = get_user(msg.from_user.id)
@@ -991,7 +946,6 @@ if __name__ == "__main__":
     
     print("🤖 Бот запущен!")
     
-    # Удаляем вебхук для избежания ошибки 409
     try:
         bot.remove_webhook()
         print("✅ Webhook удален")
