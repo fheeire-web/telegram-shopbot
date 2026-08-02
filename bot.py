@@ -10,7 +10,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ⚠️ ВАЖНО: Замените на ваш Telegram ID
-ADMIN_IDS = [7845398556]  # Сюда ваш ID!
+ADMIN_IDS = [7845398556]  # Ваш ID из логов!
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -40,14 +40,13 @@ def create_tables():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Таблица пользователей
+        # Таблица пользователей (без is_admin - будем использовать ADMIN_IDS)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 telegram_id BIGINT UNIQUE NOT NULL,
                 username VARCHAR(255),
                 balance NUMERIC(10,2) DEFAULT 0,
-                is_admin BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -115,38 +114,24 @@ def register_user(message):
             VALUES (%s, %s)
             ON CONFLICT (telegram_id)
             DO UPDATE SET username = EXCLUDED.username
-            RETURNING id, is_admin
+            RETURNING id
         """, (
             message.from_user.id,
             message.from_user.username
         ))
         
-        user_data = cursor.fetchone()
+        user_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
         conn.close()
-        return user_data
+        return user_id
     except Exception as e:
         print(f"❌ Ошибка регистрации: {e}")
         return None
 
 def is_admin(telegram_id):
-    if telegram_id in ADMIN_IDS:
-        return True
-    
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT is_admin FROM users WHERE telegram_id = %s",
-            (telegram_id,)
-        )
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        return result and result[0]
-    except:
-        return False
+    # Проверяем только по списку ADMIN_IDS
+    return telegram_id in ADMIN_IDS
 
 def get_user_by_telegram_id(telegram_id):
     try:
@@ -163,13 +148,13 @@ def get_user_by_telegram_id(telegram_id):
     except:
         return None
 
-def get_user_by_username(username):
+def get_user_by_db_id(user_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, telegram_id, username, balance FROM users WHERE username ILIKE %s",
-            (username,)
+            "SELECT id, telegram_id, username, balance FROM users WHERE id = %s",
+            (user_id,)
         )
         user = cursor.fetchone()
         cursor.close()
@@ -178,17 +163,47 @@ def get_user_by_username(username):
     except:
         return None
 
+def get_all_users(page=1, per_page=5):
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        offset = (page - 1) * per_page
+        cursor.execute("""
+            SELECT id, telegram_id, username, balance 
+            FROM users 
+            ORDER BY id DESC 
+            LIMIT %s OFFSET %s
+        """, (per_page, offset))
+        
+        users = cursor.fetchall()
+        
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total = cursor.fetchone()[0]
+        
+        cursor.close()
+        conn.close()
+        return users, total
+    except Exception as e:
+        print(f"❌ Ошибка получения пользователей: {e}")
+        return [], 0
+
 def update_balance(user_id, amount, transaction_type, description, admin_id=None):
     try:
         conn = get_db()
         cursor = conn.cursor()
         
-        # Проверяем текущий баланс
+        # Проверяем существование пользователя
         cursor.execute("SELECT balance FROM users WHERE id = %s", (user_id,))
-        current_balance = cursor.fetchone()[0]
+        result = cursor.fetchone()
+        if not result:
+            print(f"❌ Пользователь с ID {user_id} не найден")
+            return None
+        
+        current_balance = result[0]
+        new_balance = current_balance + amount
         
         # Обновляем баланс
-        new_balance = current_balance + amount
         cursor.execute(
             "UPDATE users SET balance = %s WHERE id = %s",
             (new_balance, user_id)
@@ -224,7 +239,8 @@ def get_transactions(user_id, limit=15):
         cursor.close()
         conn.close()
         return transactions
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка получения транзакций: {e}")
         return []
 
 # =========================
@@ -296,7 +312,7 @@ def products_list_menu():
                     )
                 )
     except Exception as e:
-        print(f"Ошибка загрузки товаров: {e}")
+        print(f"❌ Ошибка загрузки товаров: {e}")
         keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка загрузки", callback_data="ignore"))
     
     keyboard.add(
@@ -341,57 +357,36 @@ def balance_management_menu():
 def user_list_menu(page=1, per_page=5):
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        offset = (page - 1) * per_page
-        cursor.execute("""
-            SELECT id, telegram_id, username, balance 
-            FROM users 
-            ORDER BY id DESC 
-            LIMIT %s OFFSET %s
-        """, (per_page, offset))
-        
-        users = cursor.fetchall()
-        
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total = cursor.fetchone()[0]
-        
-        cursor.close()
-        conn.close()
-        
-        if not users:
-            keyboard.add(types.InlineKeyboardButton("📭 Пользователей нет", callback_data="ignore"))
-        else:
-            for user in users:
-                name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
-                keyboard.add(
-                    types.InlineKeyboardButton(
-                        f"{name} - {user[3]}₽",
-                        callback_data=f"user_balance_{user[0]}"
-                    )
+    users, total = get_all_users(page, per_page)
+    
+    if not users:
+        keyboard.add(types.InlineKeyboardButton("📭 Пользователей нет", callback_data="ignore"))
+    else:
+        for user in users:
+            # user: (id, telegram_id, username, balance)
+            name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"{name} - {user[3]}₽",
+                    callback_data=f"user_balance_{user[0]}"
                 )
-        
-        # Пагинация
-        total_pages = (total + per_page - 1) // per_page
-        nav_buttons = []
-        
-        if page > 1:
-            nav_buttons.append(types.InlineKeyboardButton("⬅️", callback_data=f"users_page_{page-1}"))
-        
-        if total_pages > 0:
-            nav_buttons.append(types.InlineKeyboardButton(f"{page}/{total_pages}", callback_data="ignore"))
-        
-        if page < total_pages:
-            nav_buttons.append(types.InlineKeyboardButton("➡️", callback_data=f"users_page_{page+1}"))
-        
-        if nav_buttons:
-            keyboard.row(*nav_buttons)
-            
-    except Exception as e:
-        print(f"Ошибка загрузки пользователей: {e}")
-        keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка загрузки", callback_data="ignore"))
+            )
+    
+    # Пагинация
+    total_pages = (total + per_page - 1) // per_page
+    nav_buttons = []
+    
+    if page > 1:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️", callback_data=f"users_page_{page-1}"))
+    
+    if total_pages > 0:
+        nav_buttons.append(types.InlineKeyboardButton(f"{page}/{total_pages}", callback_data="ignore"))
+    
+    if page < total_pages:
+        nav_buttons.append(types.InlineKeyboardButton("➡️", callback_data=f"users_page_{page+1}"))
+    
+    if nav_buttons:
+        keyboard.row(*nav_buttons)
     
     keyboard.add(
         types.InlineKeyboardButton("🔙 Управление балансом", callback_data="admin_balance")
@@ -481,7 +476,7 @@ def handle_callback(call):
             else:
                 keyboard.add(types.InlineKeyboardButton("📭 Товаров пока нет", callback_data="ignore"))
         except Exception as e:
-            print(f"Ошибка каталога: {e}")
+            print(f"❌ Ошибка каталога: {e}")
             keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка загрузки", callback_data="ignore"))
         
         keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
@@ -592,8 +587,10 @@ def handle_callback(call):
             return
         
         action = "ВЫДАТЬ" if call.data == "balance_add" else "СПИСАТЬ"
+        emoji = "➕" if call.data == "balance_add" else "➖"
+        
         bot.edit_message_text(
-            f"{'➕' if call.data == 'balance_add' else '➖'} <b>{action} ДЕНЬГИ</b>\n\n"
+            f"{emoji} <b>{action} ДЕНЬГИ</b>\n\n"
             "Выберите пользователя:",
             call.message.chat.id,
             call.message.message_id,
@@ -617,7 +614,7 @@ def handle_callback(call):
     # ====== ПОЛЬЗОВАТЕЛЬ - БАЛАНС ======
     if call.data.startswith("user_balance_"):
         user_id = int(call.data.split("_")[2])
-        user = get_user_by_telegram_id(user_id)
+        user = get_user_by_db_id(user_id)
         
         if user:
             name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
@@ -635,6 +632,8 @@ def handle_callback(call):
                 parse_mode="HTML",
                 reply_markup=user_balance_menu(user_id)
             )
+        else:
+            bot.answer_callback_query(call.id, "❌ Пользователь не найден!", show_alert=True)
         bot.answer_callback_query(call.id)
         return
     
@@ -644,7 +643,7 @@ def handle_callback(call):
         user_id = int(parts[2])
         amount = float(parts[3])
         
-        user = get_user_by_telegram_id(user_id)
+        user = get_user_by_db_id(user_id)
         if user:
             new_balance = update_balance(
                 user_id, 
@@ -663,17 +662,17 @@ def handle_callback(call):
                 # Уведомление пользователю
                 try:
                     bot.send_message(
-                        user[1],
+                        user[1],  # telegram_id
                         f"💰 <b>ПОПОЛНЕНИЕ БАЛАНСА</b>\n\n"
                         f"Сумма: <b>+{amount} ₽</b>\n"
                         f"Новый баланс: <b>{new_balance} ₽</b>",
                         parse_mode="HTML"
                     )
-                except:
-                    pass
+                except Exception as e:
+                    print(f"❌ Не удалось отправить уведомление: {e}")
                 
                 # Обновляем сообщение
-                user = get_user_by_telegram_id(user_id)
+                user = get_user_by_db_id(user_id)
                 if user:
                     name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
                     text = (
@@ -691,6 +690,8 @@ def handle_callback(call):
                     )
             else:
                 bot.answer_callback_query(call.id, "❌ Ошибка при выдаче!", show_alert=True)
+        else:
+            bot.answer_callback_query(call.id, "❌ Пользователь не найден!", show_alert=True)
         return
     
     # ====== ИСТОРИЯ ТРАНЗАКЦИЙ ======
@@ -712,7 +713,7 @@ def handle_callback(call):
     
     if call.data.startswith("user_history_"):
         user_id = int(call.data.split("_")[2])
-        user = get_user_by_telegram_id(user_id)
+        user = get_user_by_db_id(user_id)
         transactions = get_transactions(user_id, 15)
         
         if user:
@@ -1169,7 +1170,7 @@ def process_custom_balance(message, user_id):
     
     try:
         amount = float(message.text.strip())
-        user = get_user_by_telegram_id(user_id)
+        user = get_user_by_db_id(user_id)
         
         if not user:
             bot.send_message(
@@ -1283,16 +1284,13 @@ if __name__ == "__main__":
                 print(f"👑 Админы: {ADMIN_IDS}")
                 print("🤖 Бот запущен!")
                 
-                try:
-                    bot.infinity_polling(timeout=10, long_polling_timeout=5)
-                except Exception as e:
-                    print(f"⚠️ Ошибка polling: {e}")
-                    while True:
-                        try:
-                            bot.polling(none_stop=True, interval=1, timeout=20)
-                        except Exception as e:
-                            print(f"🔄 Перезапуск... Ошибка: {e}")
-                            time.sleep(5)
+                # Используем polling без infinity_polling для избежания конфликтов
+                while True:
+                    try:
+                        bot.polling(none_stop=True, interval=1, timeout=20)
+                    except Exception as e:
+                        print(f"🔄 Перезапуск... Ошибка: {e}")
+                        time.sleep(5)
             else:
                 print("❌ Не удалось создать таблицы")
         else:
