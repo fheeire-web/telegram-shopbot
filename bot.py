@@ -470,7 +470,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         )
         kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="menu"))
         
-        # ===== ВАЖНО: РЕКВИЗИТЫ ВСЕГДА ПОКАЗЫВАЕМ =====
         bot.send_message(
             call.message.chat.id,
             "💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
@@ -536,8 +535,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}"""
         amount = int(call.data.split("_")[2])
         msg = bot.send_message(
             call.message.chat.id,
-            f"📸 Отправь СКРИНШОТ чека на {amount} ₽\n\n"
-            "После проверки баланс пополнится."
+            f"📸 Отправь СКРИНШОТ чека на {amount} ₽\n\nПосле проверки баланс пополнится."
         )
         bot.register_next_step_handler(msg, process_receipt, amount)
         try:
@@ -864,30 +862,51 @@ https://t.me/{bot.get_me().username}?start={user[4]}
                 pass
         return
 
-# ===== ОБРАБОТКА =====
+# ===== ОБРАБОТКА ФОТО ЧЕКА =====
 def process_receipt(msg, amount):
+    # Проверяем разные способы отправки фото
+    photo_id = None
+    
     if msg.photo:
+        # Если отправили как фото
         photo_id = msg.photo[-1].file_id
-        user = get_user(msg.from_user.id)
-        if user:
-            deposit_id = save_deposit(user[0], amount, photo_id)
-            bot.send_message(
-                msg.chat.id,
-                f"✅ ЧЕК ПРИНЯТ!\n\nСумма: {amount} ₽\nЗаявка #{deposit_id}\n\nПосле проверки админом баланс пополнится.",
-                reply_markup=menu_button()
-            )
-            
-            for admin_id in ADMIN_IDS:
-                try:
+    elif msg.document:
+        # Если отправили как файл (документ)
+        if msg.document.mime_type and msg.document.mime_type.startswith('image/'):
+            photo_id = msg.document.file_id
+        else:
+            bot.send_message(msg.chat.id, "❌ Отправь фото чека (JPG/PNG)!", reply_markup=menu_button())
+            return
+    else:
+        bot.send_message(msg.chat.id, "❌ Отправь ФОТО чека!", reply_markup=menu_button())
+        return
+    
+    user = get_user(msg.from_user.id)
+    if user:
+        deposit_id = save_deposit(user[0], amount, photo_id)
+        bot.send_message(
+            msg.chat.id,
+            f"✅ ЧЕК ПРИНЯТ!\n\nСумма: {amount} ₽\nЗаявка #{deposit_id}\n\nПосле проверки админом баланс пополнится.",
+            reply_markup=menu_button()
+        )
+        
+        # Отправляем уведомление админу
+        for admin_id in ADMIN_IDS:
+            try:
+                if msg.photo:
                     bot.send_photo(
                         admin_id,
                         photo_id,
                         caption=f"📸 НОВАЯ ЗАЯВКА #{deposit_id}\n👤 @{msg.from_user.username or msg.from_user.id}\n💰 {amount} ₽"
                     )
-                except:
-                    pass
-    else:
-        bot.send_message(msg.chat.id, "❌ Отправь ФОТО чека!", reply_markup=menu_button())
+                else:
+                    bot.send_document(
+                        admin_id,
+                        photo_id,
+                        caption=f"📸 НОВАЯ ЗАЯВКА #{deposit_id}\n👤 @{msg.from_user.username or msg.from_user.id}\n💰 {amount} ₽"
+                    )
+            except Exception as e:
+                print(f"Ошибка отправки админу: {e}")
 
 def process_custom_deposit(msg):
     try:
