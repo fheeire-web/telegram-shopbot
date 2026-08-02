@@ -23,7 +23,8 @@ def init_db():
         conn = get_db()
         cur = conn.cursor()
         
-        cur.execute('''
+        # Проверяем существование таблиц и создаем если нет
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 tg_id BIGINT UNIQUE NOT NULL,
@@ -35,9 +36,9 @@ def init_db():
                 referrals_count INTEGER DEFAULT 0,
                 ref_earnings INTEGER DEFAULT 0
             )
-        ''')
+        """)
         
-        cur.execute('''
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
                 name TEXT,
@@ -46,9 +47,9 @@ def init_db():
                 stars_price INTEGER DEFAULT 0,
                 stock INTEGER DEFAULT 0
             )
-        ''')
+        """)
         
-        cur.execute('''
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER,
@@ -58,7 +59,19 @@ def init_db():
                 status TEXT DEFAULT 'completed',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
+        """)
+        
+        # Добавляем колонку stars если ее нет
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN stars INTEGER DEFAULT 0")
+        except:
+            pass  # Колонка уже существует
+        
+        # Добавляем колонку stars_price если ее нет
+        try:
+            cur.execute("ALTER TABLE products ADD COLUMN stars_price INTEGER DEFAULT 0")
+        except:
+            pass  # Колонка уже существует
         
         conn.commit()
         conn.close()
@@ -300,7 +313,7 @@ def products_menu(category):
         kb.add(types.InlineKeyboardButton("📭 Нет товаров", callback_data="none"))
     else:
         for p in products:
-            price_text = f"{p[3]}₽"
+            price_text = f"{p[3]}₽" if p[3] > 0 else ""
             if p[4] > 0:
                 price_text += f" / {p[4]}⭐"
             kb.add(types.InlineKeyboardButton(
@@ -401,7 +414,10 @@ def handle(call):
             )
         except:
             bot.send_message(call.message.chat.id, "👋 Главное меню", reply_markup=main_menu(call.from_user.id))
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -422,7 +438,10 @@ def handle(call):
 https://t.me/{bot.get_me().username}?start={user[5]}"""
             
             bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         bot.answer_callback_query(call.id)
         return
 
@@ -445,7 +464,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
 3. Ты получаешь +10 ₽ на баланс"""
             
             bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         bot.answer_callback_query(call.id)
         return
 
@@ -471,7 +493,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
 💸 Заработано: {user[8] if user else 0} ₽"""
         
         bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -486,7 +511,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
                 kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"user_cat_{cat}"))
             kb.add(types.InlineKeyboardButton("🔙 Меню", callback_data="menu"))
             bot.send_message(call.message.chat.id, "🛒 ВЫБЕРИ КАТЕГОРИЮ", reply_markup=kb)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -505,7 +533,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
                 kb.add(types.InlineKeyboardButton(f"📦 {p[1]} - {price_text}", callback_data=f"user_buy_{p[0]}"))
             kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="catalog"))
             bot.send_message(call.message.chat.id, f"📁 {category}\n\nВыбери товар:", reply_markup=kb)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -515,8 +546,8 @@ https://t.me/{bot.get_me().username}?start={user[5]}
         p = get_product_by_id(product_id)
         if p:
             kb = types.InlineKeyboardMarkup(row_width=2)
-            has_currency = p[3] > 0  # цена в валюте
-            has_stars = p[4] > 0     # цена в звездах
+            has_currency = p[3] > 0
+            has_stars = p[4] > 0
             
             if has_currency:
                 kb.add(types.InlineKeyboardButton(f"💰 Купить за {p[3]}₽", callback_data=f"buy_currency_{product_id}"))
@@ -524,7 +555,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
                 kb.add(types.InlineKeyboardButton(f"⭐ Купить за {p[4]}⭐", callback_data=f"buy_stars_{product_id}"))
             kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="catalog"))
             bot.send_message(call.message.chat.id, f"📦 {p[1]}\n\nВыбери способ оплаты:", reply_markup=kb)
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         bot.answer_callback_query(call.id)
         return
 
@@ -546,17 +580,14 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             bot.answer_callback_query(call.id, f"❌ Не хватает звезд! Нужно {product[4]}⭐", True)
             return
         
-        # Списываем звезды
         new_stars = remove_stars(call.from_user.id, product[4])
         
-        # Уменьшаем сток
         conn = get_db()
         cur = conn.cursor()
         cur.execute("UPDATE products SET stock = stock - 1 WHERE id = %s", (product_id,))
         conn.commit()
         conn.close()
         
-        # Сохраняем заказ
         save_order(call.from_user.id, product_id, product[4], 'stars')
         
         bot.answer_callback_query(call.id, f"✅ Куплено за {product[4]}⭐!")
@@ -569,7 +600,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             f"✅ ПОКУПКА УСПЕШНА!\n\n📦 {product[1]}\n📁 {product[2]}\n⭐ Цена: {product[4]}⭐\n📦 Остаток: {product[5]-1} шт\n\n⭐ Остаток звезд: {new_stars}⭐",
             reply_markup=kb)
         
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         return
 
     # ===== КУПИТЬ ЗА ВАЛЮТУ =====
@@ -590,17 +624,14 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             bot.answer_callback_query(call.id, f"❌ Не хватает! Нужно {product[3]}₽", True)
             return
         
-        # Списываем деньги
         new_balance = remove_money(call.from_user.id, product[3])
         
-        # Уменьшаем сток
         conn = get_db()
         cur = conn.cursor()
         cur.execute("UPDATE products SET stock = stock - 1 WHERE id = %s", (product_id,))
         conn.commit()
         conn.close()
         
-        # Сохраняем заказ
         save_order(call.from_user.id, product_id, product[3], 'currency')
         
         bot.answer_callback_query(call.id, f"✅ Куплено за {product[3]}₽!")
@@ -613,7 +644,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             f"✅ ПОКУПКА УСПЕШНА!\n\n📦 {product[1]}\n📁 {product[2]}\n💰 Цена: {product[3]}₽\n📦 Остаток: {product[5]-1} шт\n\n💰 Новый баланс: {new_balance}₽",
             reply_markup=kb)
         
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         return
 
     # ===== АДМИН =====
@@ -622,7 +656,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             bot.answer_callback_query(call.id, "⛔ Нет доступа!", True)
             return
         bot.send_message(call.message.chat.id, "⚙️ АДМИН-ПАНЕЛЬ", reply_markup=admin_menu())
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -631,7 +668,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
             return
         bot.send_message(call.message.chat.id, "📦 ВЫБЕРИ КАТЕГОРИЮ", reply_markup=categories_menu())
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -644,7 +684,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
                 price_text += f" / {p[4]}⭐"
             text = f"📦 {p[1]}\n📁 Категория: {p[2]}\n💰 Цена: {price_text}\n📦 В наличии: {p[5]} шт"
             bot.send_message(call.message.chat.id, text, reply_markup=product_actions_menu(product_id))
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         bot.answer_callback_query(call.id)
         return
 
@@ -661,7 +704,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             "VIP Access | Премиумы | 0 | 50 | 10\n"
             "Wallhack | Читы | 500 | 0 | 20")
         bot.register_next_step_handler(msg, process_add_product)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -671,7 +717,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
         delete_product(product_id)
         bot.answer_callback_query(call.id, f"✅ {product[1]} удален!")
         bot.send_message(call.message.chat.id, f"✅ Товар '{product[1]}' удален", reply_markup=admin_menu())
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         return
 
     # ===== ПОЛЬЗОВАТЕЛИ =====
@@ -680,7 +729,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
             return
         bot.send_message(call.message.chat.id, "👥 ВЫБЕРИ ПОЛЬЗОВАТЕЛЯ", reply_markup=users_menu())
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except:
+            pass
         bot.answer_callback_query(call.id)
         return
 
@@ -695,7 +747,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             name = f"@{u[1]}" if u[1] else f"ID: {u[0]}"
             bot.send_message(call.message.chat.id, f"👤 {name}\n💰 {u[2]}₽\n⭐ {u[3]}⭐", 
                            reply_markup=user_actions_menu(user_id))
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         bot.answer_callback_query(call.id)
         return
 
@@ -730,7 +785,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             name = f"@{u[1]}" if u[1] else f"ID: {u[0]}"
             bot.send_message(call.message.chat.id, f"👤 {name}\n💰 {u[2]}₽\n⭐ {u[3]}⭐", 
                            reply_markup=user_actions_menu(user_id))
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         return
 
     # ===== ВЫДАТЬ ЗВЕЗДЫ =====
@@ -764,7 +822,10 @@ https://t.me/{bot.get_me().username}?start={user[5]}
             name = f"@{u[1]}" if u[1] else f"ID: {u[0]}"
             bot.send_message(call.message.chat.id, f"👤 {name}\n💰 {u[2]}₽\n⭐ {u[3]}⭐", 
                            reply_markup=user_actions_menu(user_id))
-            bot.delete_message(call.message.chat.id, call.message.message_id)
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except:
+                pass
         return
 
 # ===== ДОБАВЛЕНИЕ ТОВАРА =====
@@ -802,12 +863,14 @@ if __name__ == "__main__":
     
     print("🤖 Бот запущен!")
     
+    # Удаляем вебхук чтобы избежать ошибки 409
     try:
         bot.remove_webhook()
+        print("✅ Webhook удален")
     except:
         pass
     
-    time.sleep(1)
+    time.sleep(2)
     
     while True:
         try:
