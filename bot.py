@@ -4,6 +4,7 @@ from telebot import types
 import sqlite3
 import random
 import string
+import time
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [7845398556]  # Твой ID
@@ -15,7 +16,6 @@ def init_db():
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
     
-    # Таблица пользователей (добавлены реферальные поля)
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,7 +29,6 @@ def init_db():
         )
     ''')
     
-    # Таблица товаров
     cur.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,7 +50,6 @@ def register_user(tg_id, username, invited_by=None):
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
     
-    # Проверяем, есть ли уже пользователь
     cur.execute("SELECT id FROM users WHERE tg_id = ?", (tg_id,))
     user = cur.fetchone()
     
@@ -59,21 +57,16 @@ def register_user(tg_id, username, invited_by=None):
         conn.close()
         return user[0]
     
-    # Генерируем реферальный код
     ref_code = generate_ref_code()
     
-    # Регистрируем
     cur.execute(
         "INSERT INTO users (tg_id, username, ref_code, invited_by) VALUES (?, ?, ?, ?)",
         (tg_id, username, ref_code, invited_by or 0)
     )
     user_id = cur.lastrowid
     
-    # Если есть пригласивший - начисляем бонус
     if invited_by:
-        # Начисляем 10₽ пригласившему
         cur.execute("UPDATE users SET balance = balance + 10, referrals_count = referrals_count + 1, ref_earnings = ref_earnings + 10 WHERE id = ?", (invited_by,))
-        # Уведомление пригласившему
         cur.execute("SELECT tg_id FROM users WHERE id = ?", (invited_by,))
         inviter_tg = cur.fetchone()
         if inviter_tg:
@@ -128,17 +121,17 @@ def add_money(user_id, amount):
     conn.close()
     return new_balance
 
-def remove_money(user_id, amount):
+def remove_money(tg_id, amount):
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
-    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    cur.execute("SELECT balance FROM users WHERE tg_id = ?", (tg_id,))
     result = cur.fetchone()
     if not result or result[0] < amount:
         conn.close()
         return None
-    cur.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+    cur.execute("UPDATE users SET balance = balance - ? WHERE tg_id = ?", (amount, tg_id))
     conn.commit()
-    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    cur.execute("SELECT balance FROM users WHERE tg_id = ?", (tg_id,))
     new_balance = cur.fetchone()[0]
     conn.close()
     return new_balance
@@ -283,7 +276,6 @@ def user_actions_menu(user_id):
 # ========== КОМАНДЫ ==========
 @bot.message_handler(commands=["start"])
 def start(msg):
-    # Проверяем реферальный код
     ref_code = None
     if len(msg.text.split()) > 1:
         ref_code = msg.text.split()[1]
@@ -296,8 +288,8 @@ def start(msg):
     
     register_user(msg.from_user.id, msg.from_user.username, invited_by)
     
-    # Отправляем фото с главным меню
-    photo_url = "https://i.ibb.co/..."  # ЗАМЕНИ НА СВОЮ ССЫЛКУ НА ФОТО
+    # Фото для главного меню - ТВОЯ ССЫЛКА
+    photo_url = "https://i.ibb.co/d1J7fjB/IMG-2390.png"
     
     try:
         bot.send_photo(
@@ -306,8 +298,8 @@ def start(msg):
             caption="👋 Добро пожаловать в магазин!\n\nВыбери нужный раздел:",
             reply_markup=main_menu(msg.from_user.id)
         )
-    except:
-        # Если фото не грузится - отправляем текст
+    except Exception as e:
+        print(f"Ошибка отправки фото: {e}")
         bot.send_message(
             msg.chat.id,
             "👋 Добро пожаловать в магазин!\n\nВыбери нужный раздел:",
@@ -325,7 +317,7 @@ def handle(call):
         try:
             bot.send_photo(
                 call.message.chat.id,
-                "https://i.ibb.co/d1J7fjB/IMG-2390.png",  # ЗАМЕНИ НА СВОЮ ССЫЛКУ
+                "https://i.ibb.co/d1J7fjB/IMG-2390.png",
                 caption="👋 Главное меню\n\nВыбери нужный раздел:",
                 reply_markup=main_menu(call.from_user.id)
             )
@@ -452,9 +444,8 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             bot.answer_callback_query(call.id, f"❌ Не хватает! Нужно {product[3]}₽", True)
             return
         
-        # Покупка
         new_balance = remove_money(call.from_user.id, product[3])
-        # Уменьшаем сток
+        
         conn = sqlite3.connect('bot.db')
         cur = conn.cursor()
         cur.execute("UPDATE products SET stock = stock - 1 WHERE id = ?", (product_id,))
@@ -465,7 +456,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         bot.send_message(call.from_user.id, 
             f"🛒 ПОКУПКА\n\nТовар: {product[1]}\nКатегория: {product[2]}\nЦена: {product[3]}₽\nОстаток: {product[4]-1} шт")
         
-        # Обновляем сообщение
         bal = get_balance(call.from_user.id)
         bot.send_message(call.message.chat.id, f"💰 Новый баланс: {bal}₽", reply_markup=main_menu(call.from_user.id))
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -572,7 +562,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         
         bot.answer_callback_query(call.id, f"✅ +{amount}₽")
         
-        # Обновляем
         conn = sqlite3.connect('bot.db')
         cur = conn.cursor()
         cur.execute("SELECT tg_id, username, balance FROM users WHERE id = ?", (user_id,))
@@ -585,7 +574,6 @@ https://t.me/{bot.get_me().username}?start={user[4]}
             bot.delete_message(call.message.chat.id, call.message.message_id)
         return
 
-# ===== ДОБАВЛЕНИЕ ТОВАРА (обработка) =====
 def process_add_product(msg):
     try:
         data = msg.text.split('|')
@@ -601,16 +589,26 @@ def process_add_product(msg):
         add_product(name, category, price, stock)
         bot.send_message(msg.chat.id, f"✅ Товар '{name}' добавлен в категорию '{category}'!", 
                         reply_markup=admin_menu())
-    except:
-        bot.send_message(msg.chat.id, "❌ Ошибка! Проверь формат", reply_markup=admin_menu())
+    except Exception as e:
+        bot.send_message(msg.chat.id, f"❌ Ошибка! {e}", reply_markup=admin_menu())
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     init_db()
     print("🤖 Бот запущен!")
+    
+    # Удаляем вебхук если был
+    try:
+        bot.remove_webhook()
+        print("✅ Webhook removed")
+    except:
+        pass
+    
+    time.sleep(1)
+    
     while True:
         try:
-            bot.polling(none_stop=True)
-        except:
-            import time
+            bot.polling(none_stop=True, interval=1, timeout=20)
+        except Exception as e:
+            print(f"Ошибка: {e}")
             time.sleep(5)
