@@ -7,14 +7,10 @@ from flask import Flask, request
 
 TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_IDS = [7845398556]  # Ваш ID!
+ADMIN_IDS = [7845398556]
 
 app = Flask(__name__)
 bot = telebot.TeleBot(TOKEN)
-
-# =========================
-# БАЗА ДАННЫХ
-# =========================
 
 def get_db():
     return psycopg2.connect(DATABASE_URL)
@@ -23,7 +19,6 @@ def create_tables():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -33,7 +28,6 @@ def create_tables():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
@@ -45,7 +39,6 @@ def create_tables():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id SERIAL PRIMARY KEY,
@@ -57,19 +50,14 @@ def create_tables():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
         conn.commit()
         cursor.close()
         conn.close()
-        print("✅ Таблицы созданы")
+        print("✅ Tables created")
         return True
     except Exception as e:
-        print(f"❌ Ошибка создания таблиц: {e}")
+        print(f"❌ Error: {e}")
         return False
-
-# =========================
-# ФУНКЦИИ
-# =========================
 
 def register_user(telegram_id, username):
     try:
@@ -88,7 +76,7 @@ def register_user(telegram_id, username):
         conn.close()
         return user_id
     except Exception as e:
-        print(f"❌ Ошибка регистрации: {e}")
+        print(f"❌ Error: {e}")
         return None
 
 def is_admin(telegram_id):
@@ -106,20 +94,17 @@ def get_user_by_db_id(user_id):
     except:
         return None
 
-def get_all_users(page=1, per_page=5):
+def get_all_users():
     try:
         conn = get_db()
         cursor = conn.cursor()
-        offset = (page - 1) * per_page
-        cursor.execute("SELECT id, telegram_id, username, balance FROM users ORDER BY id DESC LIMIT %s OFFSET %s", (per_page, offset))
+        cursor.execute("SELECT id, telegram_id, username, balance FROM users ORDER BY id DESC LIMIT 10")
         users = cursor.fetchall()
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total = cursor.fetchone()[0]
         cursor.close()
         conn.close()
-        return users, total
+        return users
     except:
-        return [], 0
+        return []
 
 def update_balance(user_id, amount, description, admin_id=None):
     try:
@@ -131,18 +116,16 @@ def update_balance(user_id, amount, description, admin_id=None):
             return None
         new_balance = result[0] + amount
         cursor.execute("UPDATE users SET balance = %s WHERE id = %s", (new_balance, user_id))
-        cursor.execute("INSERT INTO transactions (user_id, amount, type, description, admin_id) VALUES (%s, %s, %s, %s, %s)",
-                      (user_id, amount, "add" if amount > 0 else "remove", description, admin_id))
+        cursor.execute("""
+            INSERT INTO transactions (user_id, amount, type, description, admin_id)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (user_id, amount, "add" if amount > 0 else "remove", description, admin_id))
         conn.commit()
         cursor.close()
         conn.close()
         return new_balance
     except:
         return None
-
-# =========================
-# МЕНЮ
-# =========================
 
 def main_menu(telegram_id):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -158,6 +141,11 @@ def main_menu(telegram_id):
         keyboard.add(types.InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel"))
     return keyboard
 
+def back_button():
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back"))
+    return keyboard
+
 def admin_panel_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -167,9 +155,9 @@ def admin_panel_menu():
     keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
     return keyboard
 
-def user_list_menu(page=1, per_page=5):
+def user_list_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    users, total = get_all_users(page, per_page)
+    users = get_all_users()
     if users:
         for user in users:
             name = f"@{user[2]}" if user[2] else f"ID: {user[1]}"
@@ -191,56 +179,12 @@ def user_balance_menu(user_id):
     )
     return keyboard
 
-def back_button():
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back"))
-    return keyboard
-
-def products_list_menu():
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, price, stock, is_active FROM products ORDER BY id DESC LIMIT 10")
-        products = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        if not products:
-            keyboard.add(types.InlineKeyboardButton("📭 Товаров нет", callback_data="ignore"))
-        else:
-            for product in products:
-                status = "✅" if product[4] else "❌"
-                keyboard.add(types.InlineKeyboardButton(
-                    f"{status} {product[1]} - {product[2]}₽ ({product[3]} шт)",
-                    callback_data=f"product_{product[0]}"
-                ))
-    except:
-        keyboard.add(types.InlineKeyboardButton("⚠️ Ошибка", callback_data="ignore"))
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    return keyboard
-
-def product_view_menu(product_id):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit_{product_id}"),
-        types.InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{product_id}")
-    )
-    keyboard.add(
-        types.InlineKeyboardButton("🔄 Вкл/Откл", callback_data=f"toggle_{product_id}"),
-        types.InlineKeyboardButton("🔙 Назад", callback_data="admin_products")
-    )
-    return keyboard
-
-# =========================
-# ОБРАБОТЧИКИ
-# =========================
-
 @bot.message_handler(commands=["start"])
 def start(message):
     register_user(message.from_user.id, message.from_user.username)
     bot.send_message(
         message.chat.id,
-        "👋 Добро пожаловать в магазин!",
+        "👋 Добро пожаловать!",
         reply_markup=main_menu(message.from_user.id)
     )
 
@@ -256,7 +200,6 @@ def handle(call):
         bot.answer_callback_query(call.id)
         return
     
-    # АДМИН-ПАНЕЛЬ
     if call.data == "admin_panel":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет доступа!", True)
@@ -272,33 +215,6 @@ def handle(call):
             return
         bot.edit_message_text("💰 Выберите пользователя:", call.message.chat.id, call.message.message_id,
                              reply_markup=user_list_menu())
-        bot.answer_callback_query(call.id)
-        return
-    
-    if call.data == "admin_products":
-        if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "⛔ Нет доступа!", True)
-            return
-        bot.edit_message_text("📦 Список товаров:", call.message.chat.id, call.message.message_id,
-                             reply_markup=products_list_menu())
-        bot.answer_callback_query(call.id)
-        return
-    
-    if call.data.startswith("product_"):
-        product_id = int(call.data.split("_")[1])
-        try:
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, price, stock, is_active FROM products WHERE id = %s", (product_id,))
-            product = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            if product:
-                text = f"📦 {product[1]}\n💰 {product[3]} ₽\n📦 {product[4]} шт\n🔄 {'✅' if product[5] else '❌'}"
-                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                                     reply_markup=product_view_menu(product_id))
-        except:
-            pass
         bot.answer_callback_query(call.id)
         return
     
@@ -334,61 +250,6 @@ def handle(call):
                                          reply_markup=user_balance_menu(user_id))
         return
     
-    if call.data.startswith("delete_"):
-        product_id = int(call.data.split("_")[1])
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(
-            types.InlineKeyboardButton("✅ Да", callback_data=f"confirm_delete_{product_id}"),
-            types.InlineKeyboardButton("❌ Нет", callback_data=f"product_{product_id}")
-        )
-        bot.edit_message_text(f"⚠️ Удалить товар #{product_id}?", call.message.chat.id, call.message.message_id,
-                             reply_markup=keyboard)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if call.data.startswith("confirm_delete_"):
-        product_id = int(call.data.split("_")[2])
-        try:
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            bot.edit_message_text(f"✅ Товар #{product_id} удален", call.message.chat.id, call.message.message_id,
-                                 reply_markup=products_list_menu())
-        except:
-            pass
-        bot.answer_callback_query(call.id)
-        return
-    
-    if call.data.startswith("toggle_"):
-        product_id = int(call.data.split("_")[1])
-        try:
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("UPDATE products SET is_active = NOT is_active WHERE id = %s RETURNING is_active", (product_id,))
-            cursor.fetchone()
-            conn.commit()
-            cursor.close()
-            conn.close()
-            bot.answer_callback_query(call.id, "✅ Статус изменен!")
-            # Обновляем
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name, description, price, stock, is_active FROM products WHERE id = %s", (product_id,))
-            product = cursor.fetchone()
-            cursor.close()
-            conn.close()
-            if product:
-                text = f"📦 {product[1]}\n💰 {product[3]} ₽\n📦 {product[4]} шт\n🔄 {'✅' if product[5] else '❌'}"
-                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                                     reply_markup=product_view_menu(product_id))
-        except:
-            pass
-        return
-    
-    # ПРОФИЛЬ
     if call.data == "profile":
         try:
             conn = get_db()
@@ -412,7 +273,6 @@ def handle(call):
         bot.answer_callback_query(call.id)
         return
     
-    # КАТАЛОГ
     if call.data == "catalog":
         keyboard = types.InlineKeyboardMarkup()
         try:
@@ -446,10 +306,6 @@ def handle(call):
         bot.answer_callback_query(call.id)
         return
 
-# =========================
-# FLASK WEBHOOK
-# =========================
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -462,40 +318,34 @@ def webhook():
 def home():
     return 'Bot is running!', 200
 
-# =========================
-# ЗАПУСК
-# =========================
-
 if __name__ == "__main__":
-    print("🚀 Запуск бота...")
+    print("🚀 Starting bot...")
     create_tables()
     
-    # Удаляем старые вебхуки
     try:
         bot.remove_webhook()
-        print("✅ Вебхук удален")
+        print("✅ Webhook removed")
     except:
         pass
     time.sleep(2)
     
-    # Получаем URL из переменных
     webhook_url = os.getenv("WEBHOOK_URL")
     
     if webhook_url:
         try:
             bot.set_webhook(url=webhook_url)
-            print(f"✅ Вебхук установлен: {webhook_url}")
+            print(f"✅ Webhook set: {webhook_url}")
         except Exception as e:
-            print(f"❌ Ошибка установки вебхука: {e}")
+            print(f"❌ Error: {e}")
         
         port = int(os.getenv("PORT", 5000))
-        print(f"🚀 Запуск Flask на порту {port}")
+        print(f"🚀 Starting Flask on port {port}")
         app.run(host='0.0.0.0', port=port)
     else:
-        print("⚠️ WEBHOOK_URL не установлен! Использую polling...")
+        print("⚠️ Using polling...")
         while True:
             try:
                 bot.polling(none_stop=True, interval=1)
             except Exception as e:
-                print(f"🔄 Перезапуск... {e}")
+                print(f"🔄 Restart... {e}")
                 time.sleep(5)
