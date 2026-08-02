@@ -189,6 +189,17 @@ def get_product_by_id(product_id):
     conn.close()
     return product
 
+# ========== КНОПКИ МЕНЮ ==========
+def menu_button():
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 Меню", callback_data="menu"))
+    return kb
+
+def back_to_catalog():
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 В каталог", callback_data="catalog"))
+    return kb
+
 # ========== МЕНЮ ==========
 def main_menu(tg_id):
     kb = types.InlineKeyboardMarkup(row_width=2)
@@ -214,7 +225,7 @@ def admin_menu():
         types.InlineKeyboardButton("📦 Товары", callback_data="admin_products"),
         types.InlineKeyboardButton("➕ Добавить", callback_data="add_product")
     )
-    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+    kb.add(types.InlineKeyboardButton("🔙 Меню", callback_data="menu"))
     return kb
 
 def categories_menu():
@@ -225,7 +236,7 @@ def categories_menu():
     else:
         for cat in categories:
             kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"cat_{cat}"))
-    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin"))
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_products"))
     return kb
 
 def products_menu(category):
@@ -288,7 +299,6 @@ def start(msg):
     
     register_user(msg.from_user.id, msg.from_user.username, invited_by)
     
-    # Фото для главного меню - ТВОЯ ССЫЛКА
     photo_url = "https://i.ibb.co/d1J7fjB/IMG-2390.png"
     
     try:
@@ -312,8 +322,8 @@ def handle(call):
         bot.answer_callback_query(call.id)
         return
 
-    # ===== НАЗАД =====
-    if call.data == "back":
+    # ===== МЕНЮ =====
+    if call.data == "menu":
         try:
             bot.send_photo(
                 call.message.chat.id,
@@ -342,7 +352,7 @@ def handle(call):
 📎 Твоя реферальная ссылка:
 https://t.me/{bot.get_me().username}?start={user[4]}"""
             
-            bot.send_message(call.message.chat.id, text, reply_markup=main_menu(call.from_user.id))
+            bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
             bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
@@ -365,7 +375,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
 2. Он переходит по ссылке
 3. Ты получаешь +10 ₽ на баланс"""
             
-            bot.send_message(call.message.chat.id, text, reply_markup=main_menu(call.from_user.id))
+            bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
             bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
@@ -388,7 +398,7 @@ https://t.me/{bot.get_me().username}?start={user[4]}
 👤 Твои рефералы: {user[6] if user else 0}
 💸 Заработано: {user[7] if user else 0} ₽"""
         
-        bot.send_message(call.message.chat.id, text, reply_markup=main_menu(call.from_user.id))
+        bot.send_message(call.message.chat.id, text, reply_markup=menu_button())
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
@@ -397,38 +407,36 @@ https://t.me/{bot.get_me().username}?start={user[4]}
     if call.data == "catalog":
         categories = get_categories()
         if not categories:
-            bot.send_message(call.message.chat.id, "🛒 Товаров пока нет", 
-                           reply_markup=main_menu(call.from_user.id))
+            bot.send_message(call.message.chat.id, "🛒 Товаров пока нет", reply_markup=menu_button())
         else:
             kb = types.InlineKeyboardMarkup(row_width=2)
             for cat in categories:
-                kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"cat_{cat}"))
-            kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+                kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"user_cat_{cat}"))
+            kb.add(types.InlineKeyboardButton("🔙 Меню", callback_data="menu"))
             bot.send_message(call.message.chat.id, "🛒 ВЫБЕРИ КАТЕГОРИЮ", reply_markup=kb)
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
     # ===== КАТЕГОРИЯ В КАТАЛОГЕ =====
-    if call.data.startswith("cat_"):
-        category = call.data.split("_")[1]
+    if call.data.startswith("user_cat_"):
+        category = call.data.split("_")[2]
         products = get_products_by_category(category)
         if not products:
-            bot.send_message(call.message.chat.id, f"📭 В категории {category} нет товаров",
-                           reply_markup=main_menu(call.from_user.id))
+            bot.send_message(call.message.chat.id, f"📭 В категории {category} нет товаров", reply_markup=back_to_catalog())
         else:
             kb = types.InlineKeyboardMarkup(row_width=1)
             for p in products:
-                kb.add(types.InlineKeyboardButton(f"📦 {p[1]} - {p[3]}₽", callback_data=f"buy_{p[0]}"))
+                kb.add(types.InlineKeyboardButton(f"📦 {p[1]} - {p[3]}₽", callback_data=f"user_buy_{p[0]}"))
             kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="catalog"))
             bot.send_message(call.message.chat.id, f"📁 {category}\n\nВыбери товар:", reply_markup=kb)
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
-    # ===== КУПИТЬ ТОВАР =====
-    if call.data.startswith("buy_"):
-        product_id = int(call.data.split("_")[1])
+    # ===== КУПИТЬ ТОВАР (для пользователя) =====
+    if call.data.startswith("user_buy_"):
+        product_id = int(call.data.split("_")[2])
         product = get_product_by_id(product_id)
         
         if not product:
@@ -453,11 +461,16 @@ https://t.me/{bot.get_me().username}?start={user[4]}
         conn.close()
         
         bot.answer_callback_query(call.id, f"✅ Куплено {product[1]} за {product[3]}₽!")
-        bot.send_message(call.from_user.id, 
-            f"🛒 ПОКУПКА\n\nТовар: {product[1]}\nКатегория: {product[2]}\nЦена: {product[3]}₽\nОстаток: {product[4]-1} шт")
         
-        bal = get_balance(call.from_user.id)
-        bot.send_message(call.message.chat.id, f"💰 Новый баланс: {bal}₽", reply_markup=main_menu(call.from_user.id))
+        # Отправляем подтверждение
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 В каталог", callback_data="catalog"))
+        kb.add(types.InlineKeyboardButton("🏠 Меню", callback_data="menu"))
+        
+        bot.send_message(call.from_user.id, 
+            f"✅ ПОКУПКА УСПЕШНА!\n\n📦 {product[1]}\n📁 {product[2]}\n💰 {product[3]}₽\n📦 Остаток: {product[4]-1} шт\n\n💰 Новый баланс: {new_balance}₽",
+            reply_markup=kb)
+        
         bot.delete_message(call.message.chat.id, call.message.message_id)
         return
 
@@ -597,7 +610,6 @@ if __name__ == "__main__":
     init_db()
     print("🤖 Бот запущен!")
     
-    # Удаляем вебхук если был
     try:
         bot.remove_webhook()
         print("✅ Webhook removed")
