@@ -2,6 +2,8 @@ import os
 import telebot
 from telebot import types
 import sqlite3
+import random
+import string
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [7845398556]  # Твой ID
@@ -13,17 +15,21 @@ def init_db():
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
     
-    # Таблица пользователей
+    # Таблица пользователей (добавлены реферальные поля)
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tg_id INTEGER UNIQUE,
             username TEXT,
-            balance INTEGER DEFAULT 0
+            balance INTEGER DEFAULT 0,
+            ref_code TEXT UNIQUE,
+            invited_by INTEGER DEFAULT 0,
+            referrals_count INTEGER DEFAULT 0,
+            ref_earnings INTEGER DEFAULT 0
         )
     ''')
     
-    # Таблица товаров с категорией
+    # Таблица товаров
     cur.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,15 +44,63 @@ def init_db():
     conn.close()
 
 # ========== ПОЛЬЗОВАТЕЛИ ==========
-def register_user(tg_id, username):
+def generate_ref_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+def register_user(tg_id, username, invited_by=None):
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
+    
+    # Проверяем, есть ли уже пользователь
+    cur.execute("SELECT id FROM users WHERE tg_id = ?", (tg_id,))
+    user = cur.fetchone()
+    
+    if user:
+        conn.close()
+        return user[0]
+    
+    # Генерируем реферальный код
+    ref_code = generate_ref_code()
+    
+    # Регистрируем
     cur.execute(
-        "INSERT OR REPLACE INTO users (tg_id, username) VALUES (?, ?)",
-        (tg_id, username)
+        "INSERT INTO users (tg_id, username, ref_code, invited_by) VALUES (?, ?, ?, ?)",
+        (tg_id, username, ref_code, invited_by or 0)
     )
+    user_id = cur.lastrowid
+    
+    # Если есть пригласивший - начисляем бонус
+    if invited_by:
+        # Начисляем 10₽ пригласившему
+        cur.execute("UPDATE users SET balance = balance + 10, referrals_count = referrals_count + 1, ref_earnings = ref_earnings + 10 WHERE id = ?", (invited_by,))
+        # Уведомление пригласившему
+        cur.execute("SELECT tg_id FROM users WHERE id = ?", (invited_by,))
+        inviter_tg = cur.fetchone()
+        if inviter_tg:
+            try:
+                bot.send_message(inviter_tg[0], f"👤 Новый реферал!\n💰 +10₽ на баланс!")
+            except:
+                pass
+    
     conn.commit()
     conn.close()
+    return user_id
+
+def get_user(tg_id):
+    conn = sqlite3.connect('bot.db')
+    cur = conn.cursor()
+    cur.execute("SELECT id, tg_id, username, balance, ref_code, invited_by, referrals_count, ref_earnings FROM users WHERE tg_id = ?", (tg_id,))
+    user = cur.fetchone()
+    conn.close()
+    return user
+
+def get_user_by_ref_code(ref_code):
+    conn = sqlite3.connect('bot.db')
+    cur = conn.cursor()
+    cur.execute("SELECT id, tg_id FROM users WHERE ref_code = ?", (ref_code,))
+    user = cur.fetchone()
+    conn.close()
+    return user
 
 def get_balance(tg_id):
     conn = sqlite3.connect('bot.db')
@@ -59,7 +113,7 @@ def get_balance(tg_id):
 def get_all_users():
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
-    cur.execute("SELECT id, tg_id, username, balance FROM users")
+    cur.execute("SELECT id, tg_id, username, balance, ref_code, referrals_count, ref_earnings FROM users")
     users = cur.fetchall()
     conn.close()
     return users
@@ -149,6 +203,10 @@ def main_menu(tg_id):
         types.InlineKeyboardButton("🛒 Каталог", callback_data="catalog"),
         types.InlineKeyboardButton("👤 Профиль", callback_data="profile")
     )
+    kb.add(
+        types.InlineKeyboardButton("👥 Рефералы", callback_data="referrals"),
+        types.InlineKeyboardButton("📊 Статистика", callback_data="stats")
+    )
     if is_admin(tg_id):
         kb.add(types.InlineKeyboardButton("⚙️ Админ", callback_data="admin"))
     return kb
@@ -225,8 +283,36 @@ def user_actions_menu(user_id):
 # ========== КОМАНДЫ ==========
 @bot.message_handler(commands=["start"])
 def start(msg):
-    register_user(msg.from_user.id, msg.from_user.username)
-    bot.send_message(msg.chat.id, "👋 Добро пожаловать в магазин!", reply_markup=main_menu(msg.from_user.id))
+    # Проверяем реферальный код
+    ref_code = None
+    if len(msg.text.split()) > 1:
+        ref_code = msg.text.split()[1]
+    
+    invited_by = None
+    if ref_code:
+        inviter = get_user_by_ref_code(ref_code)
+        if inviter and inviter[0] != msg.from_user.id:
+            invited_by = inviter[0]
+    
+    register_user(msg.from_user.id, msg.from_user.username, invited_by)
+    
+    # Отправляем фото с главным меню
+    photo_url = "https://i.ibb.co/..."  # ЗАМЕНИ НА СВОЮ ССЫЛКУ НА ФОТО
+    
+    try:
+        bot.send_photo(
+            msg.chat.id,
+            photo_url,
+            caption="👋 Добро пожаловать в магазин!\n\nВыбери нужный раздел:",
+            reply_markup=main_menu(msg.from_user.id)
+        )
+    except:
+        # Если фото не грузится - отправляем текст
+        bot.send_message(
+            msg.chat.id,
+            "👋 Добро пожаловать в магазин!\n\nВыбери нужный раздел:",
+            reply_markup=main_menu(msg.from_user.id)
+        )
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle(call):
@@ -236,16 +322,81 @@ def handle(call):
 
     # ===== НАЗАД =====
     if call.data == "back":
-        bot.send_message(call.message.chat.id, "👋 Главное меню", reply_markup=main_menu(call.from_user.id))
+        try:
+            bot.send_photo(
+                call.message.chat.id,
+                "https://i.ibb.co/d1J7fjB/IMG-2390.png",  # ЗАМЕНИ НА СВОЮ ССЫЛКУ
+                caption="👋 Главное меню\n\nВыбери нужный раздел:",
+                reply_markup=main_menu(call.from_user.id)
+            )
+        except:
+            bot.send_message(call.message.chat.id, "👋 Главное меню", reply_markup=main_menu(call.from_user.id))
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
     # ===== ПРОФИЛЬ =====
     if call.data == "profile":
-        bal = get_balance(call.from_user.id)
-        bot.send_message(call.message.chat.id, f"👤 ТВОЙ ПРОФИЛЬ\n\n💰 Баланс: {bal} ₽", 
-                        reply_markup=main_menu(call.from_user.id))
+        user = get_user(call.from_user.id)
+        if user:
+            text = f"""👤 ТВОЙ ПРОФИЛЬ
+
+🆔 ID: {user[1]}
+👤 Username: @{user[2] or 'Не указан'}
+💰 Баланс: {user[3]} ₽
+👥 Приглашено: {user[6]} чел.
+💸 Заработано с рефералов: {user[7]} ₽
+
+📎 Твоя реферальная ссылка:
+https://t.me/{bot.get_me().username}?start={user[4]}"""
+            
+            bot.send_message(call.message.chat.id, text, reply_markup=main_menu(call.from_user.id))
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id)
+        return
+
+    # ===== РЕФЕРАЛЫ =====
+    if call.data == "referrals":
+        user = get_user(call.from_user.id)
+        if user:
+            text = f"""👥 РЕФЕРАЛЬНАЯ СИСТЕМА
+
+📎 Твоя ссылка:
+https://t.me/{bot.get_me().username}?start={user[4]}
+
+👥 Приглашено: {user[6]} чел.
+💰 Заработано: {user[7]} ₽
+💵 За каждого реферала: +10 ₽
+
+📊 Как это работает:
+1. Отправь ссылку другу
+2. Он переходит по ссылке
+3. Ты получаешь +10 ₽ на баланс"""
+            
+            bot.send_message(call.message.chat.id, text, reply_markup=main_menu(call.from_user.id))
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id)
+        return
+
+    # ===== СТАТИСТИКА =====
+    if call.data == "stats":
+        user = get_user(call.from_user.id)
+        conn = sqlite3.connect('bot.db')
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        total_users = cur.fetchone()[0]
+        cur.execute("SELECT SUM(balance) FROM users")
+        total_balance = cur.fetchone()[0] or 0
+        conn.close()
+        
+        text = f"""📊 СТАТИСТИКА МАГАЗИНА
+
+👥 Всего пользователей: {total_users}
+💰 Общий баланс: {total_balance} ₽
+👤 Твои рефералы: {user[6] if user else 0}
+💸 Заработано: {user[7] if user else 0} ₽"""
+        
+        bot.send_message(call.message.chat.id, text, reply_markup=main_menu(call.from_user.id))
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
@@ -302,7 +453,7 @@ def handle(call):
             return
         
         # Покупка
-        new_balance = remove_money(product_id, product[3])
+        new_balance = remove_money(call.from_user.id, product[3])
         # Уменьшаем сток
         conn = sqlite3.connect('bot.db')
         cur = conn.cursor()
