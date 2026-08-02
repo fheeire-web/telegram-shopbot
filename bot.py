@@ -23,11 +23,12 @@ def init_db():
         )
     ''')
     
-    # Таблица товаров
+    # Таблица товаров с категорией
     cur.execute('''
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
+            category TEXT,
             price INTEGER,
             stock INTEGER DEFAULT 0
         )
@@ -73,6 +74,21 @@ def add_money(user_id, amount):
     conn.close()
     return new_balance
 
+def remove_money(user_id, amount):
+    conn = sqlite3.connect('bot.db')
+    cur = conn.cursor()
+    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    result = cur.fetchone()
+    if not result or result[0] < amount:
+        conn.close()
+        return None
+    cur.execute("UPDATE users SET balance = balance - ? WHERE id = ?", (amount, user_id))
+    conn.commit()
+    cur.execute("SELECT balance FROM users WHERE id = ?", (user_id,))
+    new_balance = cur.fetchone()[0]
+    conn.close()
+    return new_balance
+
 def is_admin(tg_id):
     return tg_id in ADMIN_IDS
 
@@ -80,17 +96,33 @@ def is_admin(tg_id):
 def get_all_products():
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
-    cur.execute("SELECT id, name, price, stock FROM products ORDER BY id")
+    cur.execute("SELECT id, name, category, price, stock FROM products ORDER BY category, name")
     products = cur.fetchall()
     conn.close()
     return products
 
-def add_product(name, price, stock):
+def get_products_by_category(category):
+    conn = sqlite3.connect('bot.db')
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, category, price, stock FROM products WHERE category = ? ORDER BY name", (category,))
+    products = cur.fetchall()
+    conn.close()
+    return products
+
+def get_categories():
+    conn = sqlite3.connect('bot.db')
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT category FROM products")
+    categories = cur.fetchall()
+    conn.close()
+    return [c[0] for c in categories]
+
+def add_product(name, category, price, stock):
     conn = sqlite3.connect('bot.db')
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO products (name, price, stock) VALUES (?, ?, ?)",
-        (name, price, stock)
+        "INSERT INTO products (name, category, price, stock) VALUES (?, ?, ?, ?)",
+        (name, category, price, stock)
     )
     conn.commit()
     conn.close()
@@ -102,12 +134,20 @@ def delete_product(product_id):
     conn.commit()
     conn.close()
 
+def get_product_by_id(product_id):
+    conn = sqlite3.connect('bot.db')
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, category, price, stock FROM products WHERE id = ?", (product_id,))
+    product = cur.fetchone()
+    conn.close()
+    return product
+
 # ========== МЕНЮ ==========
 def main_menu(tg_id):
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("👤 Профиль", callback_data="profile"),
-        types.InlineKeyboardButton("🛒 Каталог", callback_data="catalog")
+        types.InlineKeyboardButton("🛒 Каталог", callback_data="catalog"),
+        types.InlineKeyboardButton("👤 Профиль", callback_data="profile")
     )
     if is_admin(tg_id):
         kb.add(types.InlineKeyboardButton("⚙️ Админ", callback_data="admin"))
@@ -121,31 +161,43 @@ def admin_menu():
     )
     kb.add(
         types.InlineKeyboardButton("📦 Товары", callback_data="admin_products"),
-        types.InlineKeyboardButton("➕ Добавить товар", callback_data="add_product")
+        types.InlineKeyboardButton("➕ Добавить", callback_data="add_product")
     )
     kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
     return kb
 
-def products_menu():
+def categories_menu():
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    categories = get_categories()
+    if not categories:
+        kb.add(types.InlineKeyboardButton("📭 Нет категорий", callback_data="none"))
+    else:
+        for cat in categories:
+            kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"cat_{cat}"))
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin"))
+    return kb
+
+def products_menu(category):
     kb = types.InlineKeyboardMarkup(row_width=1)
-    products = get_all_products()
+    products = get_products_by_category(category)
     if not products:
-        kb.add(types.InlineKeyboardButton("📭 Товаров нет", callback_data="none"))
+        kb.add(types.InlineKeyboardButton("📭 Нет товаров", callback_data="none"))
     else:
         for p in products:
             kb.add(types.InlineKeyboardButton(
-                f"{p[1]} - {p[2]}₽ ({p[3]} шт)", 
+                f"📦 {p[1]} - {p[3]}₽ ({p[4]} шт)", 
                 callback_data=f"product_{p[0]}"
             ))
-    kb.add(types.InlineKeyboardButton("🔙 Админ", callback_data="admin"))
+    kb.add(types.InlineKeyboardButton("🔙 Категории", callback_data="admin_products"))
     return kb
 
 def product_actions_menu(product_id):
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_product_{product_id}"),
-        types.InlineKeyboardButton("🔙 Назад", callback_data="admin_products")
+        types.InlineKeyboardButton("🛒 Купить", callback_data=f"buy_{product_id}"),
+        types.InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{product_id}")
     )
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_products"))
     return kb
 
 def users_menu():
@@ -165,16 +217,16 @@ def user_actions_menu(user_id):
     kb.add(
         types.InlineKeyboardButton("➕ 100", callback_data=f"add_{user_id}_100"),
         types.InlineKeyboardButton("➕ 500", callback_data=f"add_{user_id}_500"),
-        types.InlineKeyboardButton("➕ 1000", callback_data=f"add_{user_id}_1000"),
-        types.InlineKeyboardButton("🔙 Назад", callback_data="users")
+        types.InlineKeyboardButton("➕ 1000", callback_data=f"add_{user_id}_1000")
     )
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="users"))
     return kb
 
 # ========== КОМАНДЫ ==========
 @bot.message_handler(commands=["start"])
 def start(msg):
     register_user(msg.from_user.id, msg.from_user.username)
-    bot.send_message(msg.chat.id, "👋 Привет!", reply_markup=main_menu(msg.from_user.id))
+    bot.send_message(msg.chat.id, "👋 Добро пожаловать в магазин!", reply_markup=main_menu(msg.from_user.id))
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle(call):
@@ -184,65 +236,118 @@ def handle(call):
 
     # ===== НАЗАД =====
     if call.data == "back":
-        bot.edit_message_text("👋 Главное", call.message.chat.id, call.message.message_id,
-                             reply_markup=main_menu(call.from_user.id))
+        bot.send_message(call.message.chat.id, "👋 Главное меню", reply_markup=main_menu(call.from_user.id))
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
     # ===== ПРОФИЛЬ =====
     if call.data == "profile":
         bal = get_balance(call.from_user.id)
-        bot.edit_message_text(f"💰 Баланс: {bal} ₽", call.message.chat.id, call.message.message_id,
-                             reply_markup=main_menu(call.from_user.id))
+        bot.send_message(call.message.chat.id, f"👤 ТВОЙ ПРОФИЛЬ\n\n💰 Баланс: {bal} ₽", 
+                        reply_markup=main_menu(call.from_user.id))
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
     # ===== КАТАЛОГ =====
     if call.data == "catalog":
-        products = get_all_products()
-        if not products:
-            text = "🛒 Товаров пока нет"
+        categories = get_categories()
+        if not categories:
+            bot.send_message(call.message.chat.id, "🛒 Товаров пока нет", 
+                           reply_markup=main_menu(call.from_user.id))
         else:
-            text = "🛒 КАТАЛОГ\n\n"
-            for p in products:
-                text += f"📦 {p[1]}\n💰 {p[2]}₽\n📦 В наличии: {p[3]} шт\n\n"
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=main_menu(call.from_user.id))
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            for cat in categories:
+                kb.add(types.InlineKeyboardButton(f"📁 {cat}", callback_data=f"cat_{cat}"))
+            kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+            bot.send_message(call.message.chat.id, "🛒 ВЫБЕРИ КАТЕГОРИЮ", reply_markup=kb)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
+        return
+
+    # ===== КАТЕГОРИЯ В КАТАЛОГЕ =====
+    if call.data.startswith("cat_"):
+        category = call.data.split("_")[1]
+        products = get_products_by_category(category)
+        if not products:
+            bot.send_message(call.message.chat.id, f"📭 В категории {category} нет товаров",
+                           reply_markup=main_menu(call.from_user.id))
+        else:
+            kb = types.InlineKeyboardMarkup(row_width=1)
+            for p in products:
+                kb.add(types.InlineKeyboardButton(f"📦 {p[1]} - {p[3]}₽", callback_data=f"buy_{p[0]}"))
+            kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="catalog"))
+            bot.send_message(call.message.chat.id, f"📁 {category}\n\nВыбери товар:", reply_markup=kb)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id)
+        return
+
+    # ===== КУПИТЬ ТОВАР =====
+    if call.data.startswith("buy_"):
+        product_id = int(call.data.split("_")[1])
+        product = get_product_by_id(product_id)
+        
+        if not product:
+            bot.answer_callback_query(call.id, "❌ Товар не найден!", True)
+            return
+        
+        if product[4] <= 0:
+            bot.answer_callback_query(call.id, "❌ Товара нет в наличии!", True)
+            return
+        
+        user_balance = get_balance(call.from_user.id)
+        if user_balance < product[3]:
+            bot.answer_callback_query(call.id, f"❌ Не хватает! Нужно {product[3]}₽", True)
+            return
+        
+        # Покупка
+        new_balance = remove_money(product_id, product[3])
+        # Уменьшаем сток
+        conn = sqlite3.connect('bot.db')
+        cur = conn.cursor()
+        cur.execute("UPDATE products SET stock = stock - 1 WHERE id = ?", (product_id,))
+        conn.commit()
+        conn.close()
+        
+        bot.answer_callback_query(call.id, f"✅ Куплено {product[1]} за {product[3]}₽!")
+        bot.send_message(call.from_user.id, 
+            f"🛒 ПОКУПКА\n\nТовар: {product[1]}\nКатегория: {product[2]}\nЦена: {product[3]}₽\nОстаток: {product[4]-1} шт")
+        
+        # Обновляем сообщение
+        bal = get_balance(call.from_user.id)
+        bot.send_message(call.message.chat.id, f"💰 Новый баланс: {bal}₽", reply_markup=main_menu(call.from_user.id))
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         return
 
     # ===== АДМИН-ПАНЕЛЬ =====
     if call.data == "admin":
         if not is_admin(call.from_user.id):
-            bot.answer_callback_query(call.id, "⛔ Нет!", True)
+            bot.answer_callback_query(call.id, "⛔ Нет доступа!", True)
             return
-        bot.edit_message_text("⚙️ АДМИН-ПАНЕЛЬ", call.message.chat.id, call.message.message_id,
-                             reply_markup=admin_menu())
+        bot.send_message(call.message.chat.id, "⚙️ АДМИН-ПАНЕЛЬ", reply_markup=admin_menu())
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ТОВАРЫ (список) =====
+    # ===== ТОВАРЫ (админ) =====
     if call.data == "admin_products":
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
             return
-        bot.edit_message_text("📦 СПИСОК ТОВАРОВ", call.message.chat.id, call.message.message_id,
-                             reply_markup=products_menu())
+        bot.send_message(call.message.chat.id, "📦 ВЫБЕРИ КАТЕГОРИЮ", reply_markup=categories_menu())
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
-    # ===== ПРОСМОТР ТОВАРА =====
+    # ===== ПРОСМОТР ТОВАРА (админ) =====
     if call.data.startswith("product_"):
         product_id = int(call.data.split("_")[1])
-        conn = sqlite3.connect('bot.db')
-        cur = conn.cursor()
-        cur.execute("SELECT id, name, price, stock FROM products WHERE id = ?", (product_id,))
-        p = cur.fetchone()
-        conn.close()
+        p = get_product_by_id(product_id)
         if p:
-            text = f"📦 {p[1]}\n💰 {p[2]}₽\n📦 В наличии: {p[3]} шт"
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                                 reply_markup=product_actions_menu(product_id))
+            text = f"📦 {p[1]}\n📁 Категория: {p[2]}\n💰 {p[3]}₽\n📦 В наличии: {p[4]} шт"
+            bot.send_message(call.message.chat.id, text, reply_markup=product_actions_menu(product_id))
+            bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
@@ -252,18 +357,20 @@ def handle(call):
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
             return
         msg = bot.send_message(call.message.chat.id, 
-            "➕ ВВЕДИ ТОВАР\n\nФормат:\nНазвание | Цена | Количество\n\nПример:\nPlayStation 5 | 50000 | 10")
+            "➕ ДОБАВИТЬ ТОВАР\n\nФормат:\nНазвание | Категория | Цена | Количество\n\nПример:\nVIP Access | Премиумы | 1500 | 5")
         bot.register_next_step_handler(msg, process_add_product)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
     # ===== УДАЛИТЬ ТОВАР =====
-    if call.data.startswith("delete_product_"):
-        product_id = int(call.data.split("_")[2])
+    if call.data.startswith("delete_"):
+        product_id = int(call.data.split("_")[1])
+        product = get_product_by_id(product_id)
         delete_product(product_id)
-        bot.answer_callback_query(call.id, "✅ Товар удален!")
-        bot.edit_message_text("📦 Товар удален", call.message.chat.id, call.message.message_id,
-                             reply_markup=products_menu())
+        bot.answer_callback_query(call.id, f"✅ {product[1]} удален!")
+        bot.send_message(call.message.chat.id, f"✅ Товар '{product[1]}' удален", reply_markup=admin_menu())
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         return
 
     # ===== ПОЛЬЗОВАТЕЛИ =====
@@ -271,8 +378,8 @@ def handle(call):
         if not is_admin(call.from_user.id):
             bot.answer_callback_query(call.id, "⛔ Нет!", True)
             return
-        bot.edit_message_text("👥 ВЫБЕРИ ПОЛЬЗОВАТЕЛЯ", call.message.chat.id, call.message.message_id,
-                             reply_markup=users_menu())
+        bot.send_message(call.message.chat.id, "👥 ВЫБЕРИ ПОЛЬЗОВАТЕЛЯ", reply_markup=users_menu())
+        bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
@@ -286,8 +393,9 @@ def handle(call):
         conn.close()
         if u:
             name = f"@{u[1]}" if u[1] else f"ID: {u[0]}"
-            bot.edit_message_text(f"👤 {name}\n💰 {u[2]}₽", call.message.chat.id, call.message.message_id,
-                                 reply_markup=user_actions_menu(user_id))
+            bot.send_message(call.message.chat.id, f"👤 {name}\n💰 {u[2]}₽", 
+                           reply_markup=user_actions_menu(user_id))
+            bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
         return
 
@@ -321,26 +429,29 @@ def handle(call):
         conn.close()
         if u:
             name = f"@{u[1]}" if u[1] else f"ID: {u[0]}"
-            bot.edit_message_text(f"👤 {name}\n💰 {u[2]}₽", call.message.chat.id, call.message.message_id,
-                                 reply_markup=user_actions_menu(user_id))
+            bot.send_message(call.message.chat.id, f"👤 {name}\n💰 {u[2]}₽", 
+                           reply_markup=user_actions_menu(user_id))
+            bot.delete_message(call.message.chat.id, call.message.message_id)
         return
 
 # ===== ДОБАВЛЕНИЕ ТОВАРА (обработка) =====
 def process_add_product(msg):
     try:
         data = msg.text.split('|')
-        if len(data) < 3:
-            bot.send_message(msg.chat.id, "❌ Неверный формат!\nНужно: Название | Цена | Количество")
+        if len(data) < 4:
+            bot.send_message(msg.chat.id, "❌ Неверный формат!\nНужно: Название | Категория | Цена | Количество")
             return
         
         name = data[0].strip()
-        price = int(data[1].strip())
-        stock = int(data[2].strip())
+        category = data[1].strip()
+        price = int(data[2].strip())
+        stock = int(data[3].strip())
         
-        add_product(name, price, stock)
-        bot.send_message(msg.chat.id, f"✅ Товар '{name}' добавлен!", reply_markup=admin_menu())
+        add_product(name, category, price, stock)
+        bot.send_message(msg.chat.id, f"✅ Товар '{name}' добавлен в категорию '{category}'!", 
+                        reply_markup=admin_menu())
     except:
-        bot.send_message(msg.chat.id, "❌ Ошибка! Проверь формат")
+        bot.send_message(msg.chat.id, "❌ Ошибка! Проверь формат", reply_markup=admin_menu())
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
